@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<!--
+  index.html — MicroX 前端 SPA 壳
+  作用: 定义整体布局骨架(桌面左导航 / 移动端顶栏+底部导航 / 桌面右侧栏),
+        页面内容由 app.js 按 hash 路由动态渲染到 #main。
+  兼容: 桌面(>1100px) / 平板(700~1100px) / 手机(<700px), 见 style.css 媒体查询。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="MicroX — 局域网内的微型社交平台">
+  <title>MicroX</title>
+  <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=2">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Righteous&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css?v=35">
+</head>
+<body>
+  <div id="app" class="layout">
+    <!-- 桌面端左侧导航栏(平板时收窄为图标栏, 手机隐藏) -->
+    <nav class="side-nav" id="side-nav">
+      <a href="#/" class="brand" title="MicroX 首页">
+        <span class="brand-logo">𝕏</span><span class="brand-text">MicroX</span>
+      </a>
+      <a href="#/" class="nav-item" data-route="home">
+        <span class="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 3.6 21.5 12l-1.4 1.5L12 6.4l-8.1 7.1L2.5 12 12 3.6zM4.5 19.5v-7.5l2 1.8v5.7h4.5V14h2v5.5h4.5v-5.7l2-1.8v7.5h-15z"/></svg>
+        </span>
+        <span class="nav-text">首页</span>
+      </a>
+      <a href="#/user/" class="nav-item" data-route="user" id="nav-myprofile" hidden>
+        <span class="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm0 2c-4 0-8 2-8 5v3h16v-3c0-3-4-5-8-5z"/></svg>
+        </span>
+        <span class="nav-text">我的主页</span>
+      </a>
+      <a href="#/search" class="nav-item" data-route="search">
+        <span class="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M10.5 3a7.5 7.5 0 1 0 4.6 13.4l4.9 4.9 1.4-1.4-4.9-4.9A7.5 7.5 0 0 0 10.5 3zm0 2a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11z"/></svg>
+        </span>
+        <span class="nav-text">搜索</span>
+      </a>
+      <a href="#/messages" class="nav-item" data-route="messages" id="nav-msg">
+        <span class="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v9h5v2.4L11.4 15H20V6H4zm3 3h10v2H7V9zm0 3h7v2H7v-2z"/></svg>
+        </span>
+        <span class="nav-text">私信</span>
+        <span class="nav-badge" id="nav-msg-badge" hidden></span>
+      </a>
+      <a href="#/notifications" class="nav-item" data-route="notifications" id="nav-notif">
+        <span class="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6v-5a6 6 0 0 0-4-5.7V5a2 2 0 1 0-4 0v.3a6 6 0 0 0-4 5.7v5l-2 2v1h16v-1l-2-2z"/></svg>
+        </span>
+        <span class="nav-text">通知</span>
+        <span class="nav-badge" id="nav-notif-badge" hidden></span>
+      </a>
+      <a href="#/store" class="nav-item" data-route="store">
+        <span class="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v3a3 3 0 0 1-2 2.83V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7.17A3 3 0 0 1 2 9V6a2 2 0 0 1 2-2zm1 2v3a1.5 1.5 0 0 0 3 0V6h2v3a1.5 1.5 0 0 0 3 0V6h2v3a1.5 1.5 0 0 0 3 0V6h-3V4h-9v2H5zm1 7v6h6v-6H6zm8 0v6h4v-6h-4z"/></svg>
+        </span>
+        <span class="nav-text">商店</span>
+      </a>
+      <a href="#/tickets" class="nav-item" data-route="tickets">
+        <span class="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M20 4H4a2 2 0 0 0-2 2v4a2 2 0 0 1 2 2 2 2 0 0 1-2 2v4a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-4a2 2 0 0 1-2-2 2 2 0 0 1 2-2V6a2 2 0 0 0-2-2zm0 3.5a4 4 0 0 1-2.5 4.5 4 4 0 0 1 2.5 4.5V18H4v-1.5a4 4 0 0 1 2.5-4.5A4 4 0 0 1 4 7.5V6h16v1.5zM8 9h8v2H8V9zm0 4h5v2H8v-2z"/></svg>
+        </span>
+        <span class="nav-text">工单</span>
+      </a>
+      <a href="#/admin" class="nav-item" data-route="admin" id="nav-admin" hidden>
+        <span class="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3zm0 2.2 6 2.2v4.6c0 4.3-2.7 7.9-6 9.3-3.3-1.4-6-5-6-9.3V6.4l6-2.2zM11 7v5h2V7h-2zm0 7v2h2v-2h-2z"/></svg>
+        </span>
+        <span class="nav-text">管理</span>
+      </a>
+      <a href="#/settings" class="nav-item" data-route="settings">
+        <span class="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm9 2a9 9 0 0 0-.1-1.3l2-1.6-2-3.4-2.4 1a9 9 0 0 0-2.2-1.3L16 3.2h-4l-.3 2.4a9 9 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.6a9 9 0 0 0 0 2.6l-2 1.6 2 3.4 2.4-1a9 9 0 0 0 2.2 1.3l.3 2.4h4l.3-2.4a9 9 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.6c.07-.43.1-.86.1-1.3zm-2 0c0 .3 0 .6-.05.9l.02.14 1.8 1.4-.8 1.4-1.9-.8-.12.07c-.55.45-1.17.8-1.83 1l-.13.06-.1 2h-1.6l-.1-2-.13-.06a6 6 0 0 1-1.83-1l-.12-.07-1.9.8-.8-1.4 1.8-1.4.02-.14a6 6 0 0 1 0-1.8l-.02-.14-1.8-1.4.8-1.4 1.9.8.12-.07c.55-.45 1.17-.8 1.83-1l.13-.06.1-2h1.6l.1 2 .13.06a6 6 0 0 1 1.83 1l.12.07 1.9-.8.8 1.4-1.8 1.4-.02.14c.03.3.05.6.05.9z"/></svg>
+        </span>
+        <span class="nav-text">设置</span>
+      </a>
+      <button id="nav-logout" class="nav-item nav-btn" type="button" hidden>
+        <span class="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 3v2h6v14h-6v2h8V3h-8zm-1.4 4.6-1.4 1.4L11.8 11H3v2h8.8L9.2 15.4l1.4 1.4L15 12l-4.4-4.4z"/></svg>
+        </span>
+        <span class="nav-text">退出登录</span>
+      </button>
+    </nav>
+
+    <!-- 手机/平板顶部栏 -->
+    <header class="mobile-header" id="mobile-header">
+      <a href="#/" class="brand brand-mobile"><span class="brand-logo">𝕏</span><span class="brand-text">MicroX</span></a>
+      <span class="mobile-header-title" id="mobile-title">首页</span>
+      <a href="#/settings" class="mobile-header-avatar" id="mobile-avatar" title="我的主页" hidden></a>
+    </header>
+
+    <!-- 主内容区: 所有页面(时间线/搜索/主页/设置/登录)渲染于此 -->
+    <main class="main" id="main">
+      <div class="loading">加载中…</div>
+    </main>
+
+    <!-- 桌面端右侧栏: 搜索框 + 用户推荐 -->
+    <aside class="side-aside">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" width="18" height="18" class="search-box-icon"><path fill="currentColor" d="M10.5 3a7.5 7.5 0 1 0 4.6 13.4l4.9 4.9 1.4-1.4-4.9-4.9A7.5 7.5 0 0 0 10.5 3zm0 2a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11z"/></svg>
+        <input id="aside-search-input" type="search" placeholder="搜索 MicroX" autocomplete="off">
+      </div>
+      <div class="aside-card" id="aside-users"><div class="aside-card-title">新用户</div></div>
+      <div class="aside-card" id="aside-announcements"><div class="aside-card-title">公告</div></div>
+      <div class="aside-card">
+        <div class="aside-card-title">关于</div>
+        <p class="aside-about">MicroX 是一个运行在局域网内的微型社交平台，仅依赖 Node.js 内置模块。支持发帖、评论、私信、CCB经济、商店、AI 陪聊、工单与举报。</p>
+      </div>
+    </aside>
+
+    <!-- 手机底部导航栏 -->
+    <nav class="bottom-nav" id="bottom-nav">
+      <a href="#/" class="bottom-nav-item" data-route="home">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 3.6 21.5 12l-1.4 1.5L12 6.4l-8.1 7.1L2.5 12 12 3.6zM4.5 19.5v-7.5l2 1.8v5.7h4.5V14h2v5.5h4.5v-5.7l2-1.8v7.5h-15z"/></svg>
+        <span>首页</span>
+      </a>
+      <a href="#/search" class="bottom-nav-item" data-route="search">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M10.5 3a7.5 7.5 0 1 0 4.6 13.4l4.9 4.9 1.4-1.4-4.9-4.9A7.5 7.5 0 0 0 10.5 3zm0 2a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11z"/></svg>
+        <span>搜索</span>
+      </a>
+      <a href="#/messages" class="bottom-nav-item" data-route="messages" id="bottom-nav-msg">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v9h5v2.4L11.4 15H20V6H4zm3 3h10v2H7V9zm0 3h7v2H7v-2z"/></svg>
+        <span>私信</span>
+        <span class="nav-badge nav-badge-bottom" id="bottom-msg-badge" hidden></span>
+      </a>
+      <a href="#/notifications" class="bottom-nav-item" data-route="notifications" id="bottom-nav-notif">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6v-5a6 6 0 0 0-4-5.7V5a2 2 0 1 0-4 0v.3a6 6 0 0 0-4 5.7v5l-2 2v1h16v-1l-2-2z"/></svg>
+        <span>通知</span>
+        <span class="nav-badge nav-badge-bottom" id="bottom-notif-badge" hidden></span>
+      </a>
+      <a href="#/store" class="bottom-nav-item" data-route="store">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v3a3 3 0 0 1-2 2.83V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7.17A3 3 0 0 1 2 9V6a2 2 0 0 1 2-2zm1 2v3a1.5 1.5 0 0 0 3 0V6h2v3a1.5 1.5 0 0 0 3 0V6h2v3a1.5 1.5 0 0 0 3 0V6h-3V4h-9v2H5zm1 7v6h6v-6H6zm8 0v6h4v-6h-4z"/></svg>
+        <span>商店</span>
+      </a>
+      <a href="#/admin" class="bottom-nav-item" data-route="admin" id="bottom-nav-admin" hidden>
+        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3zm0 2.2 6 2.2v4.6c0 4.3-2.7 7.9-6 9.3-3.3-1.4-6-5-6-9.3V6.4l6-2.2zM11 7v5h2V7h-2zm0 7v2h2v-2h-2z"/></svg>
+        <span>管理</span>
+      </a>
+      <a href="#/settings" class="bottom-nav-item" data-route="settings">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm9 2a9 9 0 0 0-.1-1.3l2-1.6-2-3.4-2.4 1a9 9 0 0 0-2.2-1.3L16 3.2h-4l-.3 2.4a9 9 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.6a9 9 0 0 0 0 2.6l-2 1.6 2 3.4 2.4-1a9 9 0 0 0 2.2 1.3l.3 2.4h4l.3-2.4a9 9 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.6c.07-.43.1-.86.1-1.3zm-2 0c0 .3 0 .6-.05.9l.02.14 1.8 1.4-.8 1.4-1.9-.8-.12.07c-.55.45-1.17.8-1.83 1l-.13.06-.1 2h-1.6l-.1-2-.13-.06a6 6 0 0 1-1.83-1l-.12-.07-1.9.8-.8-1.4 1.8-1.4.02-.14a6 6 0 0 1 0-1.8l-.02-.14-1.8-1.4.8-1.4 1.9.8.12-.07c.55-.45 1.17-.8 1.83-1l.13-.06.1-2h1.6l.1 2 .13.06a6 6 0 0 1 1.83 1l.12.07 1.9-.8.8 1.4-1.8 1.4-.02.14c.03.3.05.6.05.9z"/></svg>
+        <span>设置</span>
+      </a>
+    </nav>
+  </div>
+
+  <!-- 全局轻提示 -->
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/app.js?v=34"></script>
+</body>
+</html>
