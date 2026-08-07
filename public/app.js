@@ -1254,7 +1254,16 @@ function hideBotTyping() {
   }
   const el = $('#bot-typing');
   if (el) el.remove();
-  updateBotHeaderStatus('AI 在线', 'on');
+  // 仅陪聊机器人恢复 "AI 在线"; 真人会话清空状态(否则人类也会被显示 "AI 在线")
+  if (chatState.otherType === 'bot') {
+    updateBotHeaderStatus('AI 在线', 'on');
+  } else {
+    const statusEl = $('#msg-chat-status');
+    if (statusEl) {
+      statusEl.textContent = '';
+      statusEl.className = 'msg-chat-status';
+    }
+  }
 }
 
 function bindMsgComposer() {
