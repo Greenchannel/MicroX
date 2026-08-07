@@ -173,8 +173,11 @@ const regDaily = new Map();    // ip -> { date, count }
 const burstStore = new Map();  // key -> number[] 时间戳数组
 const RATE_MAX_FAILS_USER = 5;            // 按账号: 连续失败 5 次即锁定
 const RATE_MAX_FAILS_IP = 20;             // 按 IP: 阈值放宽(防反向代理/NAT 共享 IP 误锁全站)
+const IP_DISTINCT_USER_MAX = 6;           // 同一 IP 在窗口内对不同真实账号失败 ≥6 个 = 字典攻击, 立即锁 IP
 const RATE_LOCK_MS = 15 * 60 * 1000;      // 锁定 15 分钟
 const RATE_WINDOW_MS = 15 * 60 * 1000;    // 失败计数窗口
+// 登录防爆破: ip -> Set<失败的真实用户名(小写)>, 用于识别"同 IP 换账号"的字典攻击
+const loginIpUsers = new Map();
 
 function rateKey(kind, id) {
   return `${kind}:${String(id).toLowerCase()}`;
@@ -207,6 +210,26 @@ function rateLocked(kind, id) {
   if (rec.until && rec.until > Date.now()) return true;
   if (rec.until && rec.until <= Date.now()) rateStore.delete(key);
   return false;
+}
+
+/** 立即将某 id 加锁(用于识别出字典攻击等场景的主动锁) */
+function rateForceLock(kind, id) {
+  const key = rateKey(kind, id);
+  const now = Date.now();
+  const rec = rateStore.get(key) || { fails: 0, windowStart: now, until: 0 };
+  rec.until = now + RATE_LOCK_MS;
+  rateStore.set(key, rec);
+}
+
+/** 清理登录防爆破的 per-IP 用户集合(仅保留仍处于锁定/计数窗口内的 IP, 防无限增长) */
+function purgeLoginIpUsers() {
+  const now = Date.now();
+  for (const [ip] of loginIpUsers) {
+    const rec = rateStore.get(rateKey('login', ip));
+    if (!rec || (rec.until && rec.until <= now && now > rec.windowStart + RATE_WINDOW_MS)) {
+      loginIpUsers.delete(ip);
+    }
+  }
 }
 
 /** 成功后清除失败记录 */
@@ -322,40 +345,76 @@ function purgeCaptcha() {
   }
 }
 
+// 验证码 3×5 点阵字体(渲染为 <rect>, 响应不含可提取的算式文本 → 正则/eval 无法自动解算)
+const CAPTCHA_FONT = {
+  '0': ['111', '101', '101', '101', '111'],
+  '1': ['010', '110', '010', '010', '111'],
+  '2': ['111', '001', '111', '100', '111'],
+  '3': ['111', '001', '111', '001', '111'],
+  '4': ['101', '101', '111', '001', '001'],
+  '5': ['111', '100', '111', '001', '111'],
+  '6': ['111', '100', '111', '101', '111'],
+  '7': ['111', '001', '001', '001', '001'],
+  '8': ['111', '101', '111', '101', '111'],
+  '9': ['111', '101', '111', '001', '111'],
+  '+': ['000', '010', '111', '010', '000'],
+  '×': ['000', '101', '010', '101', '000'],
+  '=': ['000', '111', '000', '111', '000'],
+  '?': ['111', '001', '111', '010', '000'],
+};
+
+/** 渲染单个字符为点阵 <rect> 序列 */
+function captchaCharSvg(ch, cell) {
+  const pattern = CAPTCHA_FONT[ch];
+  if (!pattern) return '';
+  const rects = [];
+  for (let r = 0; r < pattern.length; r++) {
+    for (let c = 0; c < pattern[r].length; c++) {
+      if (pattern[r][c] === '1') {
+        rects.push('<rect x="' + (c * cell) + '" y="' + (r * cell) + '" width="' + (cell - 1) + '" height="' + (cell - 1) + '"/>');
+      }
+    }
+  }
+  return rects.join('');
+}
+
 /**
- * 生成验证码 SVG: 渲染算式(如 3 × 5 = ?)而非答案本身。
- * 答案仅存于服务端 captchaStore, 响应中不包含结果(防脚本直接读取)。
- * @returns {{ token: string, svg: string, answer: string }} answer 供调用方入内存库
+ * 生成验证码 SVG: 算式(如 3 × 5 = ?)以点阵矢量渲染。
+ * 数字/符号均绘制为 <rect>, 无 <text> 明文 → 文本提取拿不到表达式, 只能 OCR(成本高)。
+ * 答案仅存于服务端 captchaStore, 响应中不包含结果。
+ * @returns {{ svg: string, answer: string }} answer 供调用方入内存库
  */
 function buildCaptcha() {
   const rand255 = () => Math.floor(Math.random() * 256);
-  const w = 150;
-  const h = 52;
+  const w = 172;
+  const h = 58;
+  const cell = 7;                       // 每点像素(含 1px 间距), 字形 21×35
+  const charW = 3 * cell;
+  const gap = 9;
   const parts = [];
-  const lines = 2 + Math.floor(Math.random() * 2);
+  const lines = 3 + Math.floor(Math.random() * 2);
   for (let i = 0; i < lines; i++) {
     parts.push('<line x1="' + (Math.random() * w) + '" y1="' + (Math.random() * h) + '" x2="' + (Math.random() * w) + '" y2="' + (Math.random() * h) + '" stroke="rgba(' + rand255() + ',' + rand255() + ',' + rand255() + ',0.5)" stroke-width="' + (1 + Math.random() * 1.5).toFixed(1) + '" />');
   }
-  for (let i = 0; i < 25; i++) {
-    parts.push('<circle cx="' + (Math.random() * w) + '" cy="' + (Math.random() * h) + '" r="' + (0.5 + Math.random() * 1.5).toFixed(1) + '" fill="rgba(' + rand255() + ',' + rand255() + ',' + rand255() + ',0.6)" />');
+  for (let i = 0; i < 30; i++) {
+    parts.push('<circle cx="' + (Math.random() * w) + '" cy="' + (Math.random() * h) + '" r="' + (0.5 + Math.random() * 1.6).toFixed(1) + '" fill="rgba(' + rand255() + ',' + rand255() + ',' + rand255() + ',0.6)" />');
   }
-  // 算式: 10 以内两数相加/相乘, 结果 2~81 位纯数字, 便于用户口算
-  const a = 2 + Math.floor(Math.random() * 8);
-  const b = 2 + Math.floor(Math.random() * 8);
+  // 算式: 2~12 两数相加/相乘, 便于用户口算
+  const a = 2 + Math.floor(Math.random() * 11);
+  const b = 2 + Math.floor(Math.random() * 11);
   const op = Math.random() < 0.5 ? '+' : '×';
   const answer = String(op === '+' ? a + b : a * b);
-  // 每个字符(数字/符号)独立 <text> 随机旋转/位移/字号/颜色
+  // 每个字符独立分组: 随机旋转/垂直位移/颜色, 点阵无文本可提取
   const chars = [String(a), op, String(b), '=', '?'];
-  let x = 12;
+  let x = 10;
   for (const ch of chars) {
-    const angle = (Math.random() - 0.5) * 30;
-    const dy = (Math.random() - 0.5) * 8;
-    const fontSize = 24 + Math.random() * 8;
+    const angle = (Math.random() - 0.5) * 26;
+    const dy = (Math.random() - 0.5) * 6;
     const color = 'hsl(' + Math.floor(Math.random() * 360) + ',70%,50%)';
-    parts.push('<text x="' + x.toFixed(1) + '" y="' + (32 + dy).toFixed(1) + '" font-size="' + fontSize.toFixed(1) + '" fill="' + color + '" font-family="Arial, sans-serif" font-weight="bold" transform="rotate(' + angle.toFixed(1) + ' ' + x.toFixed(1) + ' 32)">' + ch + '</text>');
-    x += 24 + Math.random() * 8;
+    parts.push('<g transform="translate(' + x.toFixed(1) + ' ' + (12 + dy).toFixed(1) + ') rotate(' + angle.toFixed(1) + ')" fill="' + color + '">' + captchaCharSvg(ch, cell) + '</g>');
+    x += charW + gap + Math.random() * 4;
   }
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '"><rect width="100%" height="100%" fill="#f2f2f2"/>\n' + parts.join('') + '\n</svg>';
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '"><rect width="100%" height="100%" fill="#f2f2f2"/>' + parts.join('') + '</svg>';
   return { answer, svg };
 }
 
@@ -868,12 +927,15 @@ async function handleRegister(req, res) {
     rateFail('reg', ip, RATE_MAX_FAILS_IP);
     return fail(res, 400, '验证码已过期，请刷新重试');
   }
+  // 安全加固: 校验失败(过快/答错)即焚毁 token, 每次校验最多尝试一次 → 无法按 token 穷举答案
   if (Date.now() - ct.iat < CAPTCHA_MIN_MS) {
     // 签发后 1.5 秒内提交视为脚本行为
+    captchaStore.delete(body.captcha_token);
     rateFail('reg', ip, RATE_MAX_FAILS_IP);
     return fail(res, 400, '验证码校验过快，请重新输入图中算式结果');
   }
   if (String(body.captcha_answer).trim() !== ct.answer) {
+    captchaStore.delete(body.captcha_token);
     rateFail('reg', ip, RATE_MAX_FAILS_IP);
     return fail(res, 400, '验证码错误');
   }
@@ -912,7 +974,14 @@ async function handleLogin(req, res) {
   const user = db.findUserByUsername(username);
   if (!user || !verifyPassword(password, user.salt, user.password_hash)) {
     rateFail('login', ip, RATE_MAX_FAILS_IP);
-    if (user) rateFail('login', username, RATE_MAX_FAILS_USER);
+    if (user) {
+      rateFail('login', username, RATE_MAX_FAILS_USER);
+      // 字典攻击检测: 同一 IP 在窗口内对不同真实账号失败达阈值, 立即锁定该 IP
+      let set = loginIpUsers.get(ip);
+      if (!set) { set = new Set(); loginIpUsers.set(ip, set); }
+      set.add(String(username).toLowerCase());
+      if (set.size >= IP_DISTINCT_USER_MAX) rateForceLock('login', ip);
+    }
     return fail(res, 401, '用户名或密码错误');
   }
   if (isBanned(user)) {
@@ -955,10 +1024,11 @@ function handleMe(req, res) {
 function handleDailyBonus(req, res) {
   const user = requireUser(req, res);
   if (!user) return;
-  const balance = db.claimDailyBonus(user.id, todayUtc(), COIN_DAILY);
+  const amount = rewardValue('daily');
+  const balance = db.claimDailyBonus(user.id, todayUtc(), amount);
   ok(res, {
     claimed: balance !== null,
-    amount: balance !== null ? COIN_DAILY : 0,
+    amount: balance !== null ? amount : 0,
     balance: balance !== null ? balance : db.getWallet(user.id),
   });
 }
@@ -1064,9 +1134,11 @@ async function handleCreatePost(req, res) {
 
   // 纵深防御: 落库前剥离 HTML 尖括号(前端 escapeHtml 之外的兜底)
   const postId = db.createPost(user.id, sanitizeText(content), image);
-  // 发帖奖励
-  const balance = db.addWallet(user.id, COIN_POST);
-  ok(res, { id: postId, balance, reward: COIN_POST });
+  // 发帖奖励(额度与频率管理员可在管理页调整; 超上限/冷却中则不发放)
+  const reward = rewardValue('post');
+  const granted = reward > 0 && db.claimRewardFrequency(user.id, 'post');
+  if (granted) db.addWallet(user.id, reward);
+  ok(res, { id: postId, balance: db.getWallet(user.id), reward: granted ? reward : 0 });
 }
 
 function handleTimeline(req, res) {
@@ -1183,8 +1255,10 @@ async function handleCreateComment(req, res) {
   }
 
   const commentId = db.addComment(postId, user.id, sanitizeText(content), parentId);
-  // 评论奖励
-  const balance = db.addWallet(user.id, COIN_COMMENT);
+  // 评论奖励(额度与频率管理员可在管理页调整; 超上限/冷却中则不发放)
+  const commentReward = rewardValue('comment');
+  const commentGranted = commentReward > 0 && db.claimRewardFrequency(user.id, 'comment');
+  const balance = commentGranted ? db.addWallet(user.id, commentReward) : db.getWallet(user.id);
 
   // 互动通知:
   // - 回复评论(回复其顶级评论的作者) -> 给被回复人发 reply 通知
@@ -1215,7 +1289,7 @@ async function handleCreateComment(req, res) {
     replyToComment(botToReply, commentId, postId).catch(() => {});
   }
 
-  ok(res, { id: commentId, balance, reward: COIN_COMMENT });
+  ok(res, { id: commentId, balance, reward: commentGranted ? commentReward : 0 });
 }
 
 function handleDeleteComment(req, res, segs) {
@@ -1719,62 +1793,38 @@ async function handleStoreUpload(req, res) {
   });
 }
 
-/** POST /api/store/sell: 缴押金上架商品 */
+/** POST /api/store/sell: 缴押金上架商品
+ * 用户摊位仅支持文件商品; 头像框/头衔/聊天气泡由管理员在管理界面创建(见 POST /api/admin/store/items) */
 async function handleStoreSell(req, res) {
   const user = requireUser(req, res);
   if (!user) return;
 
   const body = await parseJsonBody(req);
-  const { name, type, price, monthly_price, data, file_id, file_name, file_size } = body;
+  const { name, type, price, file_id, file_name, file_size } = body;
 
   const errName = validateItemName(name);
   if (errName) return fail(res, 400, errName);
-  if (!ITEM_TYPES.includes(type)) return fail(res, 400, '商品类型不合法');
+  if (type !== 'file') return fail(res, 400, '用户摊位仅支持上架文件商品');
 
   const priceNum = Number(price);
   const errPrice = validateAmount(priceNum);
   if (errPrice) return fail(res, 400, errPrice);
 
   // 文件商品: 必须有已上传文件且未被引用; 不支持订阅
-  let fileFields = { file_name: '', file_size: 0, file_id: '' };
-  if (type === 'file') {
-    if (typeof file_id !== 'string' || !file_id) return fail(res, 400, '缺少文件');
-    const filePath = path.join(UPLOAD_DIR, file_id);
-    if (file_id.includes('..') || !fs.existsSync(filePath)) return fail(res, 400, '文件不存在');
-    if (db.isFileIdUsed(file_id)) return fail(res, 400, '该文件已被其他商品使用');
-    if (Number(monthly_price) > 0) return fail(res, 400, '文件商品不支持订阅');
-    fileFields = {
-      file_name: sanitizeFileName(typeof file_name === 'string' ? file_name : 'file'),
-      file_size: Number.isInteger(file_size) ? file_size : 0,
-      file_id,
-    };
-  }
-
-  // 样式商品: 必须有 CSS 片段且不携带文件
-  let dataStr = '';
-  if (type !== 'file') {
-    const errCss = validateCss(data);
-    if (errCss) return fail(res, 400, errCss);
-    dataStr = data.trim();
-    if (file_id) return fail(res, 400, '样式商品不能附带文件');
-  }
-
-  // 订阅价(仅样式商品可选)
-  let monthlyNum = 0;
-  if (monthly_price !== undefined && monthly_price !== 0) {
-    monthlyNum = Number(monthly_price);
-    if (!Number.isInteger(monthlyNum) || monthlyNum < 1 || monthlyNum > WALLET_MAX) {
-      return fail(res, 400, '订阅价格不合法');
-    }
-  }
+  if (typeof file_id !== 'string' || !file_id) return fail(res, 400, '缺少文件');
+  const filePath = path.join(UPLOAD_DIR, file_id);
+  if (file_id.includes('..') || !fs.existsSync(filePath)) return fail(res, 400, '文件不存在');
+  if (db.isFileIdUsed(file_id)) return fail(res, 400, '该文件已被其他商品使用');
 
   // 扣除押金(余额不足拒绝)
   if (!trySpend(user.id, DEPOSIT)) return fail(res, 400, `押金不足，开店需要 ${DEPOSIT} CCB`);
 
   const itemId = db.createItem({
-    name: name.trim(), type, price: priceNum, monthly_price: monthlyNum,
-    data: dataStr,
-    file_name: fileFields.file_name, file_size: fileFields.file_size, file_id: fileFields.file_id,
+    name: name.trim(), type: 'file', price: priceNum, monthly_price: 0,
+    data: '',
+    file_name: sanitizeFileName(typeof file_name === 'string' ? file_name : 'file'),
+    file_size: Number.isInteger(file_size) ? file_size : 0,
+    file_id,
     seller_id: user.id, deposit: DEPOSIT,
   });
 
@@ -2571,6 +2621,11 @@ function handleToggleFollow(req, res, segs) {
   const following = !db.isFollowing(user.id, target.id);
   if (following) {
     db.followUser(user.id, target.id);
+    // 关注奖励(额度与频率管理员可在管理页调整; 取关不扣回, 超上限/冷却中则不发放)
+    const followReward = rewardValue('follow');
+    const followedReward = rewardValue('followed');
+    if (followReward > 0 && db.claimRewardFrequency(user.id, 'follow')) db.addWallet(user.id, followReward);
+    if (followedReward > 0 && db.claimRewardFrequency(target.id, 'followed')) db.addWallet(target.id, followedReward);
     // 被关注通知(不通知机器人, 避免刷屏)
     if (target.account_type !== 'bot') {
       notify(target.id, user.id, 'follow', 'user', target.id, '关注了你');
@@ -2694,6 +2749,103 @@ function handleSearch(req, res) {
 function aiSetting(key, def) {
   const v = db.getSetting(key);
   return v === '' || v === null ? def : v;
+}
+
+// ---------- CCB 互动奖励配置(管理员可在管理页调整, 存 settings 表, 实时生效) ----------
+const REWARD_DEFAULTS = { daily: COIN_DAILY, post: COIN_POST, comment: COIN_COMMENT, liked: 2, like: 1, followed: 3, follow: 1 };
+/** 读取某奖励的当前配置值(settings 表 reward_<key>), 非法/未设置时回退默认 */
+function rewardValue(key) {
+  const v = db.getSetting('reward_' + key);
+  if (v === null || v === '') return REWARD_DEFAULTS[key];
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 && n <= WALLET_MAX ? n : REWARD_DEFAULTS[key];
+}
+
+// 奖励频率限制默认值(每日次数上限 cap 0=不限; 冷却间隔 cooldown 分钟 0=无)
+const REWARD_FREQ_DEFAULTS = {
+  post: { cap: 20, cooldown: 0 },
+  comment: { cap: 50, cooldown: 0 },
+  liked: { cap: 50, cooldown: 0 },
+  like: { cap: 30, cooldown: 1 },
+  followed: { cap: 50, cooldown: 0 },
+  follow: { cap: 20, cooldown: 1 },
+};
+/** 读取奖励频率限制值(settings 表 reward_<key>_cap / _cooldown), 非法/未设置回退默认 */
+function rewardFreq(key, field, fallback) {
+  const v = db.getSetting(`reward_${key}_${field}`);
+  if (v === null || v === '') return fallback;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * GET /api/admin/rewards: 读取 CCB 互动奖励配置(仅管理员)。
+ * 返回 7 个额度键(daily/post/comment/liked/like/followed/follow),
+ * 并为 6 个有频率限制的奖励补 _cap / _cooldown 键(daily 保持 1 次/天)。
+ */
+function handleAdminRewardsGet(req, res) {
+  if (!requireAdmin(req, res)) return;
+  const out = {};
+  for (const key of Object.keys(REWARD_DEFAULTS)) out[key] = rewardValue(key);
+  for (const key of Object.keys(REWARD_FREQ_DEFAULTS)) {
+    out[`${key}_cap`] = rewardFreq(key, 'cap', REWARD_FREQ_DEFAULTS[key].cap);
+    out[`${key}_cooldown`] = rewardFreq(key, 'cooldown', REWARD_FREQ_DEFAULTS[key].cooldown);
+  }
+  ok(res, out);
+}
+
+/**
+ * POST /api/admin/rewards: 更新 CCB 互动奖励配置(仅管理员)。
+ * body 可含: { daily?, post?, post_cap?, post_cooldown?, comment?, ... }
+ * 额度 0~WALLET_MAX; cap 0~100000; cooldown 0~10080 分钟; 全部合法才写入。
+ */
+async function handleAdminRewardsPost(req, res) {
+  if (!requireAdmin(req, res)) return;
+  const body = await parseJsonBody(req);
+  const patch = {};
+  for (const key of Object.keys(REWARD_DEFAULTS)) {
+    if (body[key] === undefined) continue;
+    const n = Number(body[key]);
+    if (!Number.isInteger(n) || n < 0 || n > WALLET_MAX) {
+      return fail(res, 400, `奖励值需为 0~${WALLET_MAX} 的整数`);
+    }
+    patch[key] = String(n);
+  }
+  for (const key of Object.keys(REWARD_FREQ_DEFAULTS)) {
+    for (const field of ['cap', 'cooldown']) {
+      const bkey = `${key}_${field}`;
+      if (body[bkey] === undefined) continue;
+      const n = Number(body[bkey]);
+      const max = field === 'cap' ? 100000 : 10080;
+      if (!Number.isInteger(n) || n < 0 || n > max) {
+        return fail(res, 400, field === 'cap' ? `${key} 上限需为 0~100000 的整数` : `${key} 冷却需为 0~10080 分钟的整数`);
+      }
+      patch[bkey] = String(n);
+    }
+  }
+  for (const [k, v] of Object.entries(patch)) db.setSetting('reward_' + k, v);
+  ok(res, { updated: Object.keys(patch) });
+}
+
+// ---------- 「关于」文案(settings about_text, 管理员可改) ----------
+const ABOUT_DEFAULT = 'MicroX 是一个微型社交平台，仅依赖 Node.js 内置模块。支持发帖、评论、私信、CCB经济、商店、AI 陪聊、工单与举报。';
+const ABOUT_MAX = 500;
+
+/** GET /api/about: 公开读取「关于」文案(缺省用默认) */
+function handleAbout(req, res) {
+  const v = db.getSetting('about_text');
+  ok(res, { text: v === null || v === '' ? ABOUT_DEFAULT : v });
+}
+
+/** POST /api/admin/about: 管理员更新「关于」文案 */
+async function handleAdminAbout(req, res) {
+  if (!requireAdmin(req, res)) return;
+  const body = await parseJsonBody(req);
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  if (!text) return fail(res, 400, '「关于」内容不能为空');
+  if (codePointLength(text) > ABOUT_MAX) return fail(res, 400, `「关于」内容最多 ${ABOUT_MAX} 字`);
+  db.setSetting('about_text', text);
+  ok(res, null);
 }
 
 // 互动扫描间隔(可通过环境变量覆盖, 默认 5 分钟; 测试用 ENGAGE_INTERVAL_MS=小值)
@@ -3959,6 +4111,9 @@ setTimeout(async function engageLoop() {
 setInterval(() => { stockTickAll().catch(() => {}); }, STOCK_TICK_MS);
 setTimeout(() => { stockTickAll().catch(() => {}); }, 30000);
 
+// 登录防爆破: 定期清理 per-IP 用户集合(防内存增长)
+setInterval(purgeLoginIpUsers, 10 * 60 * 1000);
+
 // ---------- 陪聊机器人 API(创建者管理) ----------
 
 /** GET /api/bots: 陪聊列表(管理员/创建者看全部, 普通用户看启用中的) */
@@ -4335,6 +4490,9 @@ async function route(req, res) {
     // 管理员
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'ai-settings' && segs.length === 3) return handleAdminAiSettingsGet(req, res);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'ai-settings' && segs.length === 3) return await handleAdminAiSettingsPost(req, res);
+    if (req.method === 'GET' && sub === 'admin' && segs[2] === 'rewards' && segs.length === 3) return handleAdminRewardsGet(req, res);
+    if (req.method === 'POST' && sub === 'admin' && segs[2] === 'rewards' && segs.length === 3) return await handleAdminRewardsPost(req, res);
+    if (req.method === 'POST' && sub === 'admin' && segs[2] === 'about' && segs.length === 3) return await handleAdminAbout(req, res);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'agents' && segs.length === 3) return handleAdminAgents(req, res);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'agents' && segs.length === 5 && segs[4] === 'verify') return await handleAdminAgentVerify(req, res, segs);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'users' && segs.length === 3) return handleAdminUsers(req, res);
@@ -4385,6 +4543,7 @@ async function route(req, res) {
 
     // 公告(无需登录)
     if (req.method === 'GET' && sub === 'announcements' && segs.length === 2) return handleAnnouncements(req, res);
+    if (req.method === 'GET' && sub === 'about' && segs.length === 2) return handleAbout(req, res);
 
     // 股票
     if (req.method === 'GET' && sub === 'stocks' && segs.length === 2) return handleStocksList(req, res);
@@ -4514,6 +4673,22 @@ ensureAdmin();
 db.pruneExpiredSessions();
 // 首次启动预置官方股票(仅当库中完全没有股票时)
 seedOfficialStocks();
+// 奖励配置默认值种入 settings(仅补缺失键, 不覆盖管理员已调整的值);
+// 保证 server.js 与 db.js 读取一致的数值, 且管理页展示即实际生效值
+for (const [key, def] of Object.entries(REWARD_DEFAULTS)) {
+  const k = 'reward_' + key;
+  const v = db.getSetting(k);
+  if (v === null || v === '') db.setSetting(k, String(def));
+}
+for (const [key, freq] of Object.entries(REWARD_FREQ_DEFAULTS)) {
+  for (const [field, val] of Object.entries(freq)) {
+    const k = `reward_${key}_${field}`;
+    const v = db.getSetting(k);
+    if (v === null || v === '') db.setSetting(k, String(val));
+  }
+}
+// 清理奖励频率表的过期记录(保留当天与前一天, 防止跨时区边界误删)
+db.purgeRewardUsage(todayUtc());
 // 语义缓存建表(幂等, 复用主数据库连接, 数据随主库持久化)
 semanticCache.initSemanticCache(db.db);
 

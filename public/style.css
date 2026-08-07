@@ -582,7 +582,9 @@ select {
 }
 
 .composer textarea {
-  flex: 1;
+  /* 父级是普通块级 div(非 flex 容器), flex:1 不会生效, 需显式撑满宽度 */
+  display: block;
+  width: 100%;
   background: transparent;
   border: none;
   outline: none;

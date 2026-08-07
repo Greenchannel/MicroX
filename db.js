@@ -212,6 +212,8 @@ addColumn('bots', 'price_per_reply', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('bots', 'subscription_price', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('bots', 'is_official', 'INTEGER NOT NULL DEFAULT 0');
 try { db.exec('CREATE TABLE IF NOT EXISTS bot_subs (user_id INTEGER NOT NULL, bot_id INTEGER NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY (user_id, bot_id));'); } catch { /* 忽略 */ }
+// 奖励频率记录: 每用户每奖励类型每天的发放次数与上次发放时间(配合每日次数上限/冷却间隔)
+try { db.exec('CREATE TABLE IF NOT EXISTS reward_usage (user_id INTEGER NOT NULL, key TEXT NOT NULL, day TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, last_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, key, day));'); } catch { /* 忽略 */ }
 addColumn('users', 'account_type', "TEXT NOT NULL DEFAULT 'human'");
 addColumn('users', 'agent_verified', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'agent_intro', "TEXT NOT NULL DEFAULT ''");
@@ -832,6 +834,10 @@ const stmts = {
   // AI 陪聊
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
   setSetting: db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'),
+  // 奖励频率
+  rewardUsage: db.prepare('SELECT count, last_at FROM reward_usage WHERE user_id = ? AND key = ? AND day = ?'),
+  rewardUsageUpsert: db.prepare('INSERT INTO reward_usage (user_id, key, day, count, last_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, key, day) DO UPDATE SET count = excluded.count, last_at = excluded.last_at'),
+  rewardUsagePurge: db.prepare('DELETE FROM reward_usage WHERE day < ?'),
   botByUserId: db.prepare('SELECT * FROM bots WHERE user_id = ?'),
   insertBot: db.prepare('INSERT INTO bots (user_id, creator_id, persona) VALUES (?, ?, ?)'),
   updateBotConfig: db.prepare(`
@@ -1720,8 +1726,49 @@ function toggleCommentLike(userId, commentId) {
 // ---------- 点赞(带作者奖励) ----------
 
 /**
+ * 读取点赞奖励配置(管理员在管理页可调, 存 settings 表)。
+ * @param {string} key settings 键(reward_liked / reward_like)
+ * @param {number} fallback 默认值
+ * @returns {number} 非负整数; 非法/未设置回退默认
+ */
+function rewardOf(key, fallback) {
+  const row = stmts.getSetting.get(key);
+  if (!row || row.value === '') return fallback;
+  const n = Number(row.value);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * 奖励频率判定: 每日次数上限 + 冷却间隔 都满足才返回 true, 并登记本次发放。
+ * 配置读 settings 表(reward_<key>_cap / reward_<key>_cooldown, 管理员可调);
+ * cap 0=不限次数, cooldown 0=无冷却。
+ * @param {number} userId
+ * @param {string} key 奖励键(post/comment/liked/like/follow/followed)
+ * @returns {boolean} true=本次应发放
+ */
+function claimRewardFrequency(userId, key) {
+  const cap = rewardOf('reward_' + key + '_cap', 0);
+  const cooldownMin = rewardOf('reward_' + key + '_cooldown', 0);
+  const day = new Date().toISOString().slice(0, 10);
+  const now = Date.now();
+  const usage = stmts.rewardUsage.get(userId, key, day);
+  const count = usage ? usage.count : 0;
+  const lastAt = usage ? usage.last_at : 0;
+  if (cap > 0 && count >= cap) return false;
+  if (cooldownMin > 0 && lastAt > 0 && now - lastAt < cooldownMin * 60000) return false;
+  stmts.rewardUsageUpsert.run(userId, key, day, count + 1, now);
+  return true;
+}
+
+/** 清理奖励频率表中早于指定日期(UTC)的过期记录 */
+function purgeRewardUsage(day) {
+  stmts.rewardUsagePurge.run(day);
+}
+
+/**
  * 切换帖子点赞。取消点赞无操作; 新增点赞时若作者非本人且未领过奖励,
- * 给作者发放 COIN_LIKE CCB(同一用户对同一帖只奖励一次)。
+ * 按配置(reward_liked)给作者发放 CCB(同一用户对同一帖只奖励一次);
+ * 点赞者本人按配置(reward_liked/reward_like)可得奖励。
  * @returns {object|null} { liked, likeCount, reward } 或 null(帖子不存在)
  */
 function toggleLike(userId, postId) {
@@ -1731,13 +1778,21 @@ function toggleLike(userId, postId) {
     stmts.deleteLike.run(userId, postId);
     return { liked: false, likeCount: Number(stmts.likeCount.get(postId).c), reward: 0 };
   }
+  // 默认值与 server.js 的 REWARD_DEFAULTS 保持一致(启动时也会种入 settings 表)
+  const likedReward = rewardOf('reward_liked', COIN_LIKE);   // 作者被点赞
+  const likeReward = rewardOf('reward_like', 1);             // 点赞者
   stmts.insertLike.run(userId, postId);
   let reward = 0;
   if (post.user_id !== userId) {
+    // 作者被点赞奖励(每人每帖一次 + 每日上限/冷却)
     const claimed = stmts.claimLikeReward.run(postId, userId);
-    if (claimed.changes > 0) {
-      reward = COIN_LIKE;
-      addWallet(post.user_id, COIN_LIKE);
+    if (claimed.changes > 0 && likedReward > 0 && claimRewardFrequency(post.user_id, 'liked')) {
+      reward = likedReward;
+      addWallet(post.user_id, likedReward);
+    }
+    // 点赞者奖励(受每日上限/冷却约束)
+    if (likeReward > 0 && claimRewardFrequency(userId, 'like')) {
+      addWallet(userId, likeReward);
     }
   }
   return { liked: true, likeCount: Number(stmts.likeCount.get(postId).c), reward };
@@ -2265,6 +2320,8 @@ module.exports = {
   addWallet,
   setWallet,
   claimDailyBonus,
+  claimRewardFrequency,
+  purgeRewardUsage,
   setBanUntil,
   setMuteUntil,
   pruneExpiredPenalties,

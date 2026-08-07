@@ -1757,21 +1757,13 @@ async function loadStoreMine() {
 }
 
 function sellFormHtml() {
+  // 开店摆摊仅支持文件商品; 头像框/头衔/聊天气泡由管理员在管理界面创建
   return `
     <div class="sell-form-row">
-      <select id="sell-type">
-        <option value="avatar_frame">头像框</option>
-        <option value="chat_bubble">聊天气泡</option>
-        <option value="file">文件/数据</option>
-      </select>
       <input id="sell-name" placeholder="商品名称(1~30字)" maxlength="30">
+      <input id="sell-price" type="number" placeholder="售价(CCB)" min="1">
     </div>
     <div class="sell-form-row">
-      <input id="sell-price" type="number" placeholder="售价(CCB)" min="1">
-      <input id="sell-monthly" type="number" placeholder="月订阅价(0=不支持订阅)" min="0">
-    </div>
-    <textarea id="sell-css" placeholder="样式 CSS(头像框/气泡): 例如 border:3px solid #ffd400; box-shadow:0 0 10px #ffd400"></textarea>
-    <div class="sell-form-row" id="sell-file-row" hidden>
       <input type="file" id="sell-file">
       <span id="sell-file-info" style="font-size:12px;color:var(--text-dim)">支持最大 512MB 文件/数据</span>
     </div>
@@ -1780,25 +1772,10 @@ function sellFormHtml() {
     </div>`;
 }
 
-/** 绑定上架表单: 类型切换显隐样式/文件字段 + 文件流式上传 */
+/** 绑定上架表单: 文件流式上传 + 上架 */
 function bindSellForm() {
-  const typeSel = $('#sell-type');
-  const cssBox = $('#sell-css');
-  const fileRow = $('#sell-file-row');
   const fileInput = $('#sell-file');
   let uploaded = null; // { file_id, file_name, file_size }
-
-  const updateType = () => {
-    const isFile = typeSel.value === 'file';
-    cssBox.hidden = isFile;
-    fileRow.hidden = !isFile;
-    // 只隐藏"月订阅价"输入框本身(文件商品不支持订阅);
-    // 注意不能隐藏父元素, 否则"售价"输入框会一起消失
-    $('#sell-monthly').style.display = isFile ? 'none' : '';
-    $('#sell-monthly').value = isFile ? '0' : $('#sell-monthly').value;
-  };
-  typeSel.addEventListener('change', () => { updateType(); uploaded = null; $('#sell-file-info').textContent = '支持最大 512MB 文件/数据'; });
-  updateType();
 
   fileInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
@@ -1822,22 +1799,16 @@ function bindSellForm() {
   });
 
   $('#sell-submit').addEventListener('click', async () => {
-    const isFile = typeSel.value === 'file';
+    if (!uploaded) return toast('请先选择并上传文件', true);
     const body = {
       name: $('#sell-name').value.trim(),
-      type: typeSel.value,
+      type: 'file',
       price: Number($('#sell-price').value),
-      monthly_price: Number($('#sell-monthly').value) || 0,
-      data: isFile ? undefined : $('#sell-css').value,
+      monthly_price: 0,
+      file_id: uploaded.file_id,
+      file_name: uploaded.file_name,
+      file_size: uploaded.file_size,
     };
-    if (isFile) {
-      if (!uploaded) return toast('请先选择并上传文件', true);
-      body.file_id = uploaded.file_id;
-      body.file_name = uploaded.file_name;
-      body.file_size = uploaded.file_size;
-    } else {
-      body.monthly_price = Number($('#sell-monthly').value) || 0;
-    }
     try {
       const data = await api('POST', '/api/store/sell', body);
       me.wallet = data.balance;
@@ -1845,8 +1816,6 @@ function bindSellForm() {
       toast('上架成功（押金已扣）');
       $('#sell-name').value = '';
       $('#sell-price').value = '';
-      $('#sell-monthly').value = '0';
-      $('#sell-css').value = '';
       fileInput.value = '';
       uploaded = null;
       loadStoreItems();
@@ -2309,6 +2278,7 @@ function renderAdminPage() {
       <button class="admin-tab" data-tab="reports">举报</button>
       <button class="admin-tab" data-tab="agents">认证</button>
       <button class="admin-tab" data-tab="ai">AI互动</button>
+      <button class="admin-tab" data-tab="rewards">奖励</button>
       <button class="admin-tab" data-tab="store">商品</button>
       <button class="admin-tab" data-tab="notice">公告</button>
       <button class="admin-tab" data-tab="broadcast">官方广播</button>
@@ -2318,7 +2288,7 @@ function renderAdminPage() {
   $('#main').querySelectorAll('.admin-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       $('#main').querySelectorAll('.admin-tab').forEach((t) => t.classList.toggle('active', t === tab));
-      const map = { users: renderAdminUsers, dm: renderAdminDm, tickets: renderAdminTickets, reports: renderAdminReports, agents: renderAdminAgents, ai: renderAdminAi, store: renderAdminStore, notice: renderAdminNotices, broadcast: renderAdminBroadcast };
+      const map = { users: renderAdminUsers, dm: renderAdminDm, tickets: renderAdminTickets, reports: renderAdminReports, agents: renderAdminAgents, ai: renderAdminAi, rewards: renderAdminRewards, store: renderAdminStore, notice: renderAdminNotices, broadcast: renderAdminBroadcast };
       (map[tab.dataset.tab] || renderAdminUsers)();
     });
   });
@@ -2370,11 +2340,26 @@ async function renderAdminBroadcast() {
 function renderAdminNotices() {
   const box = $('#admin-content');
   box.innerHTML = `
+    <div class="admin-note" style="margin-bottom:6px">「关于」文案（右侧栏展示，1~500 字，保存后全站生效）</div>
+    <textarea id="about-text" rows="3" maxlength="500" style="width:100%;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;color:var(--text);resize:vertical;outline:none"></textarea>
+    <button class="btn btn-primary" id="about-save" type="button" style="padding:8px 18px;font-size:13px;margin-top:8px">保存「关于」</button>
+    <div class="store-section-title" style="margin-top:18px">公告管理</div>
     <div class="admin-notice-create">
       <textarea id="notice-content" rows="2" maxlength="500" placeholder="公告内容（1~500 字）…" style="width:100%;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;color:var(--text);resize:vertical;outline:none"></textarea>
       <button class="btn btn-primary" id="notice-publish" type="button" style="padding:8px 18px;font-size:13px;margin-top:8px">发布公告</button>
     </div>
     <div id="notice-list" style="margin-top:14px"><div class="loading">加载中…</div></div>`;
+
+  api('GET', '/api/about').then((data) => { $('#about-text').value = data.text || ''; }).catch(() => {});
+  $('#about-save').addEventListener('click', async () => {
+    const text = $('#about-text').value.trim();
+    if (!text) return toast('「关于」内容不能为空', true);
+    try {
+      await api('POST', '/api/admin/about', { text });
+      toast('已保存');
+      refreshAsideAbout();
+    } catch (err) { toast(err.message, true); }
+  });
 
   $('#notice-publish').addEventListener('click', async () => {
     const content = $('#notice-content').value.trim();
@@ -2573,6 +2558,63 @@ function renderAdminAi() {
             ai_engage_interval: Number($('#ai-engage-interval').value),
             ai_post_image_rate: Number($('#ai-post-img-rate').value),
           });
+          toast('已保存');
+        } catch (err) {
+          toast(err.message, true);
+        }
+      });
+    } catch (err) {
+      box.innerHTML = emptyHtml(err.message);
+    }
+  }
+}
+
+/** 管理页: CCB 互动奖励额度与频率调整(存 settings 表, 实时生效) */
+const REWARD_LABELS = [
+  ['daily', '每日登录', false],
+  ['post', '发帖', true],
+  ['comment', '评论', true],
+  ['liked', '帖子被点赞（作者）', true],
+  ['like', '点赞（点赞者）', true],
+  ['followed', '被关注', true],
+  ['follow', '关注别人', true],
+];
+function renderAdminRewards() {
+  const box = $('#admin-content');
+  box.innerHTML = '<div class="loading">加载中…</div>';
+  load();
+
+  async function load() {
+    try {
+      const data = await api('GET', '/api/admin/rewards');
+      box.innerHTML = `
+        <div class="admin-report-row" style="gap:14px">
+          <div style="font-weight:700;font-size:16px">CCB 互动奖励</div>
+          <div class="admin-note">设置实时生效（无需重启）。额度设为 0 即关闭该奖励；每日次数上限 0=不限；冷却 0=无。每日登录固定 1 次/天。关注/点赞奖励按动作发放，注意刷币风险。</div>
+          <div class="ds-row" style="border-bottom:1px solid var(--border-soft);padding-bottom:6px;font-size:13px;color:var(--text-dim)">
+            <span class="ds-label" style="min-width:130px">奖励</span>
+            <span class="ds-label" style="width:120px;text-align:left">额度(CCB)</span>
+            <span class="ds-label" style="width:140px;text-align:left">每日次数上限</span>
+            <span class="ds-label">冷却(分钟)</span>
+          </div>
+          ${REWARD_LABELS.map(([key, label, hasFreq]) => `
+            <div class="ds-row">
+              <span class="ds-label" style="min-width:130px">${label}</span>
+              <input class="stock-trade-input" data-reward="${key}" type="number" min="0" value="${data[key]}" style="max-width:120px;flex:none">
+              ${hasFreq ? `
+              <input class="stock-trade-input" data-reward="${key}_cap" type="number" min="0" value="${data[key + '_cap']}" style="max-width:120px;flex:none">
+              <input class="stock-trade-input" data-reward="${key}_cooldown" type="number" min="0" value="${data[key + '_cooldown']}" style="max-width:120px;flex:none">`
+              : '<span class="ds-label">1 次/天</span>'}
+            </div>`).join('')}
+          <div class="admin-report-actions" style="border-top:1px solid var(--border-soft);padding-top:12px">
+            <button class="btn btn-primary" id="rewards-save">保存</button>
+          </div>
+        </div>`;
+      $('#rewards-save').addEventListener('click', async () => {
+        try {
+          const patch = {};
+          box.querySelectorAll('[data-reward]').forEach((input) => { patch[input.dataset.reward] = Number(input.value); });
+          await api('POST', '/api/admin/rewards', patch);
           toast('已保存');
         } catch (err) {
           toast(err.message, true);
@@ -3743,6 +3785,17 @@ async function refreshAsideAnnouncements() {
   } catch { /* 忽略 */ }
 }
 
+// ---------- 关于文案 ----------
+
+async function refreshAsideAbout() {
+  const el = $('#aside-about');
+  if (!el) return;
+  try {
+    const data = await api('GET', '/api/about');
+    if (data.text) el.textContent = data.text;
+  } catch { /* 忽略 */ }
+}
+
 // ---------- 通知 ----------
 
 const NOTIF_LABELS = { like: '❤️ 赞', comment: '💬 评论', reply: '↩️ 回复', tip: '🪙 打赏', follow: '👤 关注' };
@@ -4053,6 +4106,7 @@ async function claimDailyBonus() {
   await refreshMe();
   refreshAsideUsers();
   refreshAsideAnnouncements();
+  refreshAsideAbout();
   refreshUnreadBadge();
   refreshNotifBadge();
   claimDailyBonus();
