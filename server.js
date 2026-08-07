@@ -106,18 +106,6 @@ const DEPOSIT = 100;      // 摊位押金
 const SUB_DAYS = 30;      // 订阅时长(天)
 const WALLET_MAX = 1e9;   // 钱包/金额上限
 
-// 服务端 Ollama: 平台提供的本地推理后端(用户创建陪聊可选, 收入归平台)
-const SERVER_OLLAMA_URL = 'http://127.0.0.1:11434/v1';
-const SERVER_OLLAMA_KEY = 'ollama';          // Ollama 无需真实 Key, 占位
-const SERVER_OLLAMA_DEFAULT_MODEL = 'qwen3:4b';  // 默认模型(拉取列表失败或未知时兜底)
-const SERVER_OLLAMA_DEFAULT_PRICE = 50;      // 未配置价格的模型默认按条价(CCB/条)
-// 各模型按条计费价格(CCB/条), 按模型名精确匹配(未列出的模型用默认价)
-const SERVER_OLLAMA_PRICE = {
-  'qwen3.5:2b': 50,
-  'qwen3:4b': 100,
-  'deepseek-r1:1.5b': 30,
-};
-
 // 商品
 const ITEM_TYPES = ['avatar_frame', 'chat_bubble', 'file'];
 const CSS_MAX = 500;
@@ -179,6 +167,9 @@ function sanitizeText(value) {
 // 登录/注册暴力破解防护(内存; 服务重启后清零, 对局域网规模足够)
 // 失败计数与突发计数分离存储, 避免互相覆盖
 const rateStore = new Map();   // key -> { fails, windowStart, until }
+// 每 IP 每日注册上限(防脚本批量刷号, 内存态重启清零)
+const REG_DAILY_LIMIT = 5;
+const regDaily = new Map();    // ip -> { date, count }
 const burstStore = new Map();  // key -> number[] 时间戳数组
 const RATE_MAX_FAILS_USER = 5;            // 按账号: 连续失败 5 次即锁定
 const RATE_MAX_FAILS_IP = 20;             // 按 IP: 阈值放宽(防反向代理/NAT 共享 IP 误锁全站)
@@ -798,10 +789,46 @@ function ensureAdmin() {
 
 // ---------- 账号 ----------
 
+/**
+ * 限定领取条件(JSON) → 中文描述(私信/提示用)。如 {"ccb":500,"followers":10} → "CCB达到500且粉丝达到10"
+ */
+function describeLimitedConds(condsStr) {
+  if (!condsStr) return '登录条件';
+  let conds = {};
+  try { conds = JSON.parse(condsStr); } catch { return '登录条件'; }
+  const labels = { ccb: 'CCB达到', followers: '粉丝达到', posts: '发帖达到', comments: '评论达到' };
+  const parts = [];
+  for (const [k, v] of Object.entries(conds)) {
+    if (labels[k] && Number(v) > 0) parts.push(`${labels[k]}${v}`);
+  }
+  return parts.length ? parts.join('且') : '登录条件';
+}
+
+/**
+ * 登录/注册后自动领取满足条件的限定物品, 并通过 MicroX 系统私信通知用户。
+ * @returns {Array<{itemId,name,conds}>} 本次新发放列表
+ */
+function grantLimitedAndNotify(userId) {
+  const granted = db.grantLimitedToUser(userId);
+  if (granted.length === 0) return granted;
+  const admin = db.findUserByUsername(ADMIN_USERNAME);
+  const adminId = admin ? admin.id : 1;
+  for (const g of granted) {
+    db.sendMessage(adminId, userId, `[MicroX] 您已达到${describeLimitedConds(g.conds)}，成功获得「${g.name}」，祝贺！`, '');
+  }
+  return granted;
+}
+
 async function handleRegister(req, res) {
   // 安全加固: 单 IP 注册限速(防批量注册)
   const ip = clientIp(req);
   if (rateLocked('reg', ip)) return fail(res, 429, '尝试过于频繁，请 15 分钟后再试');
+  // 每 IP 每日注册上限(防脚本批量刷号)
+  const regDay = todayUtc();
+  const regRec = regDaily.get(ip);
+  if (regRec && regRec.date === regDay && regRec.count >= REG_DAILY_LIMIT) {
+    return fail(res, 429, '今日注册数量已达上限，请明天再试');
+  }
 
   const body = await parseJsonBody(req);
   const { username, password, account_type } = body;
@@ -852,7 +879,12 @@ async function handleRegister(req, res) {
   db.createSession(token, userId);
   res.setHeader('Set-Cookie', sessionCookieHeader(token, SESSION_MAX_AGE));
   rateReset('reg', ip);
-  ok(res, { id: userId, username, account_type: isAgent ? 'agent' : 'human' });
+  // 记录本 IP 今日注册数(防刷号)
+  const prevReg = regDaily.get(ip);
+  regDaily.set(ip, { date: regDay, count: (prevReg && prevReg.date === regDay ? prevReg.count : 0) + 1 });
+  // 注册即登录, 自动领取限定物品
+  const newLimited = grantLimitedAndNotify(userId);
+  ok(res, { id: userId, username, account_type: isAgent ? 'agent' : 'human', new_limited: newLimited });
 }
 
 async function handleLogin(req, res) {
@@ -864,9 +896,10 @@ async function handleLogin(req, res) {
   if (rateLocked('login', ip)) return fail(res, 429, '尝试次数过多，请 15 分钟后再试');
   if (rateLocked('login', username)) return fail(res, 429, '该账号已临时锁定，请 15 分钟后再试');
 
-  // 先清理已到期的封禁/禁言与订阅, 再取用户(登录也触发订阅清理)
+  // 先清理已到期的封禁/禁言/订阅/会话, 再取用户(登录也触发清理)
   db.pruneExpiredPenalties();
   db.pruneExpiredItems();
+  db.pruneExpiredSessions();
 
   const user = db.findUserByUsername(username);
   if (!user || !verifyPassword(password, user.salt, user.password_hash)) {
@@ -887,7 +920,9 @@ async function handleLogin(req, res) {
   const token = crypto.randomBytes(32).toString('hex');
   db.createSession(token, user.id);
   res.setHeader('Set-Cookie', sessionCookieHeader(token, SESSION_MAX_AGE));
-  ok(res, { id: user.id, username: user.username });
+  // 登录即自动领取: 发放未拥有的限定物品
+  const newLimited = grantLimitedAndNotify(user.id);
+  ok(res, { id: user.id, username: user.username, new_limited: newLimited });
 }
 
 function handleLogout(req, res) {
@@ -1604,7 +1639,7 @@ function handleStoreItems(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const type = url.searchParams.get('type') || '';
   const seller = url.searchParams.get('seller') || 'all';
-  let items = db.getActiveItems(type);
+  let items = db.getActiveItems(type).filter((i) => !i.limited); // 限定物品仅登录自动发放, 商店隐藏
   if (seller === 'official') items = items.filter((i) => i.seller_id === null);
   else if (seller === 'user') items = items.filter((i) => i.seller_id !== null);
 
@@ -1619,6 +1654,8 @@ function handleStoreItems(req, res) {
     }
     item.ownedByMe = ownedMap.has(item.id);
     item.ownedMode = ownedMap.get(item.id) || '';
+    // 安全: 文件商品下载走 /api/store/item/:id/download(有鉴权), 列表不暴露 file_id(防未登录绕过购买)
+    delete item.file_id;
   }
   ok(res, { items });
 }
@@ -1748,6 +1785,7 @@ async function handleStoreBuy(req, res) {
 
   const item = db.getItemById(itemId);
   if (!item || item.status !== 'active') return fail(res, 404, '商品不存在或已下架');
+  if (item.limited) return fail(res, 400, '该商品为限定发放，无法购买');
   if (item.type === 'file' && mode === 'subscribe') return fail(res, 400, '文件商品仅支持买断');
   if (db.hasActiveItem(user.id, itemId)) return fail(res, 400, '已拥有该商品或订阅生效中');
 
@@ -1790,7 +1828,12 @@ async function handleStoreOff(req, res, segs) {
 function handleStoreMine(req, res) {
   const user = requireUser(req, res);
   if (!user) return;
-  ok(res, { selling: db.getItemsBySeller(user.id), owned: db.getUserItems(user.id) });
+  const owned = db.getUserItems(user.id);
+  const selling = db.getItemsBySeller(user.id);
+  // 纵深防御: 下载一律走 /api/store/item/:id/download(有鉴权), 不暴露 file_id
+  for (const o of owned) delete o.file_id;
+  for (const s of selling) delete s.file_id;
+  ok(res, { selling, owned });
 }
 
 /** GET /api/store/item/:id/download: 下载文件商品(买家/卖家/管理员) */
@@ -1948,6 +1991,7 @@ function handleAdminAiSettingsGet(req, res) {
     ai_group_reply_rate: aiSetting('ai_group_reply_rate', '10'),
     ai_engage_interval: aiSetting('ai_engage_interval', '5'),
     ai_semantic_deep: aiSetting('ai_semantic_deep', '1'),
+    ai_post_image_rate: aiSetting('ai_post_image_rate', '4'),
   });
 }
 
@@ -1971,7 +2015,7 @@ async function handleAdminAiSettingsPost(req, res) {
     if (v !== '1' && v !== '0') return fail(res, 400, '语义缓存深度开关只能为 1 或 0');
     patch.ai_semantic_deep = v;
   }
-  for (const [key, label] of [['ai_comment_reply_rate', '评论回复概率'], ['ai_group_reply_rate', '群聊回复概率']]) {
+  for (const [key, label] of [['ai_comment_reply_rate', '评论回复概率'], ['ai_group_reply_rate', '群聊回复概率'], ['ai_post_image_rate', '带图帖子浏览概率']]) {
     if (body[key] !== undefined) {
       const n = Number(body[key]);
       if (!Number.isInteger(n) || n < 0 || n > 100) return fail(res, 400, `${label}需为 0~100 的整数`);
@@ -2142,6 +2186,67 @@ async function handleAdminPenalty(req, res, segs) {
   } else {
     fail(res, 400, '处罚类型不合法');
   }
+}
+
+/** POST /api/admin/users/:id/grant-item: 授予任意物品(含普通/限定/文件) */
+async function handleAdminGrantItem(req, res, segs) {
+  const admin = requireAdmin(req, res);
+  if (!admin) return;
+  const targetId = Number(segs[3]);
+  if (!Number.isInteger(targetId) || targetId <= 0) return fail(res, 400, '用户 ID 不合法');
+  const target = db.getUserById(targetId);
+  if (!target) return fail(res, 404, '用户不存在');
+  const body = await parseJsonBody(req);
+  const itemId = Number(body.item_id);
+  if (!Number.isInteger(itemId) || itemId <= 0) return fail(res, 400, '商品 ID 不合法');
+  const item = db.getItemById(itemId);
+  if (!item) return fail(res, 404, '商品不存在');
+  const granted = db.grantItemToUser(targetId, itemId);
+  ok(res, { granted, item: { id: item.id, name: item.name, type: item.type } });
+}
+
+/** POST /api/admin/users/:id/grant-stock: 转让管理员自己已持有的股票 */
+async function handleAdminGrantStock(req, res, segs) {
+  const admin = requireAdmin(req, res);
+  if (!admin) return;
+  const targetId = Number(segs[3]);
+  if (!Number.isInteger(targetId) || targetId <= 0) return fail(res, 400, '用户 ID 不合法');
+  if (targetId === admin.id) return fail(res, 400, '不能转让给自己');
+  const target = db.getUserById(targetId);
+  if (!target) return fail(res, 404, '用户不存在');
+  const body = await parseJsonBody(req);
+  const stockId = Number(body.stock_id);
+  const shares = Number(body.shares);
+  if (!Number.isInteger(stockId) || stockId <= 0) return fail(res, 400, '股票 ID 不合法');
+  if (!Number.isInteger(shares) || shares < 1 || shares > STOCK_ORDER_MAX) {
+    return fail(res, 400, `单笔需转让 1~${STOCK_ORDER_MAX} 股`);
+  }
+  const stock = db.getStockById(stockId);
+  if (!stock) return fail(res, 404, '股票不存在');
+  const r = db.transferStock(admin.id, targetId, stockId, shares);
+  if (!r.ok) return fail(res, 400, r.error);
+  ok(res, { shares: r.shares, stock: { id: stock.id, name: stock.name } });
+}
+
+/** POST /api/admin/users/:id/grant-bot-sub: 直接开通陪聊订阅(不要求管理员拥有该陪聊) */
+async function handleAdminGrantBotSub(req, res, segs) {
+  const admin = requireAdmin(req, res);
+  if (!admin) return;
+  const targetId = Number(segs[3]);
+  if (!Number.isInteger(targetId) || targetId <= 0) return fail(res, 400, '用户 ID 不合法');
+  const target = db.getUserById(targetId);
+  if (!target) return fail(res, 404, '用户不存在');
+  const body = await parseJsonBody(req);
+  const botId = Number(body.bot_id);
+  const days = Number(body.days);
+  if (!Number.isInteger(botId) || botId <= 0) return fail(res, 400, '陪聊 ID 不合法');
+  const bot = db.getBotByUserId(botId);
+  if (!bot) return fail(res, 404, '陪聊不存在');
+  const err = validateDays(days);
+  if (err) return fail(res, 400, err);
+  const expiresAt = addDaysUtc(days);
+  db.setBotSub(targetId, botId, expiresAt);
+  ok(res, { bot: { id: bot.user_id, name: bot.username }, expires_at: expiresAt });
 }
 
 function handleAdminTickets(req, res) {
@@ -2332,11 +2437,37 @@ async function handleAdminStoreUpdate(req, res, segs) {
     }
     fields.monthly_price = monthly;
   }
-
-  if (Object.keys(fields).length === 0) {
-    return fail(res, 400, '没有需要修改的内容');
+  // 限定发放开关: 单独写列(不走 updateItem 的 COALESCE), 允许仅传 limited
+  let changed = Object.keys(fields).length > 0;
+  if (body.limited !== undefined) {
+    if (body.limited !== 0 && body.limited !== 1) return fail(res, 400, '限定开关只能为 0 或 1');
+    db.setItemLimited(itemId, body.limited);
+    changed = true;
   }
-  db.updateItem(itemId, fields);
+  // 限定领取条件(JSON 字符串, 如 {"ccb":500,"followers":10}): 空串=登录即领
+  if (body.limited_conds !== undefined) {
+    let conds = body.limited_conds;
+    if (typeof conds === 'string' && conds.trim() !== '') {
+      try {
+        const parsed = JSON.parse(conds);
+        const validKeys = ['ccb', 'followers', 'posts', 'comments'];
+        for (const [k, v] of Object.entries(parsed)) {
+          if (!validKeys.includes(k)) return fail(res, 400, '限定条件类型不合法');
+          if (!Number.isInteger(v) || v < 1 || v > 9999999) return fail(res, 400, '限定阈值需为正整数');
+        }
+        conds = JSON.stringify(parsed);
+      } catch {
+        return fail(res, 400, '限定条件格式不正确(需为 JSON)');
+      }
+    } else {
+      conds = '';
+    }
+    db.setItemLimitedConds(itemId, conds);
+    changed = true;
+  }
+
+  if (!changed) return fail(res, 400, '没有需要修改的内容');
+  if (Object.keys(fields).length > 0) db.updateItem(itemId, fields);
   ok(res, null);
 }
 
@@ -2356,6 +2487,40 @@ function handleAdminItemsAll(req, res) {
     }
   }
   ok(res, { items });
+}
+
+/** GET /api/admin/holdings: 管理员自己的全部持仓(授予股票下拉数据源) */
+function handleAdminHoldings(req, res) {
+  const admin = requireAdmin(req, res);
+  if (!admin) return;
+  ok(res, { holdings: db.getUserHoldings(admin.id) });
+}
+
+/** POST /api/admin/broadcast: 选中的官方 AI 批量发帖 + 群发私信(不调用 AI API) */
+async function handleAdminBroadcast(req, res) {
+  const admin = requireAdmin(req, res);
+  if (!admin) return;
+  const body = await parseJsonBody(req);
+  const botIds = Array.isArray(body.bot_ids)
+    ? [...new Set(body.bot_ids.map((v) => Number(v)).filter((n) => Number.isInteger(n) && n > 0))]
+    : [];
+  if (botIds.length === 0) return fail(res, 400, '请选择至少一个官方 AI');
+  if (botIds.length > 10) return fail(res, 400, '一次最多选择 10 个官方 AI');
+  const content = typeof body.content === 'string' ? body.content.trim() : '';
+  const err = validateContent(content);
+  if (err) return fail(res, 400, err);
+
+  // 校验全部为官方 AI
+  const bots = [];
+  for (const botId of botIds) {
+    const bot = db.getBotByUserId(botId);
+    if (!bot || bot.is_official !== 1) return fail(res, 400, `官方 AI 不存在(id=${botId})`);
+    bots.push(bot);
+  }
+  const userIds = db.getAllHumanUserIds();
+  const r = db.broadcastFromBots(botIds, userIds, content);
+  const botNames = bots.map((b) => (db.getUserById(b.user_id) || {}).username || String(b.user_id));
+  ok(res, { bots: botNames, users: userIds.length, posts: r.posts, messages: r.messages });
 }
 
 function handleAdminMessages(req, res) {
@@ -2566,46 +2731,6 @@ const BOT_BUY_DAILY_MAX = 20000;
 const botBuyLog = new Map();
 
 /**
- * 判断机器人是否走本地 Ollama 服务。
- * 本地 qwen3 等思考模型: 需要更大的 max_tokens 预算(思考+正文)与更长超时,
- * 且输出可能混入思考内容, 需走 stripThinking 裁剪。
- * @param {object} bot 机器人行
- * @returns {boolean} 是否本地 Ollama
- */
-function isOllamaBot(bot) {
-  return /(?:localhost|127\.0\.0\.1):11434|ollama/i.test(bot.api_base_url || '');
-}
-
-/**
- * 裁剪模型输出中的思考内容。
- * qwen3 系列思考模型可能把 <think>...</think> 或"思考... </think> 正文"混入正文,
- * 统一在展示前删除(OpenAI 兼容接口的 reasoning 字段天然不混入 content, 此为兜底)。
- * @param {string} text 模型原始输出
- * @returns {string} 去除思考部分后的正文
- */
-function stripThinking(text) {
-  let t = String(text).replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-  // 非标准输出兜底: 思考内容后紧跟 </think> 再跟正文(开头可能没有 <think> 标签)
-  const m = t.match(/^[\s\S]*?<\/think>\s*/);
-  if (m) t = t.slice(m[0].length).trim();
-  return t;
-}
-
-/**
- * 本地 Ollama 串行互斥。
- * Ollama 对同一模型串行处理请求(本机 num_parallel=1): 并发时后到的请求在服务端排队,
- * 而 Node fetch(undici)默认 300 秒响应头超时——排队超过 5 分钟会报 UND_ERR_HEADERS_TIMEOUT。
- * 因此平台内所有 Ollama 调用串行化: 上一个完成后下一个才开始, 且超时只覆盖真正的推理阶段。
- * @param {Function} fn 要串行执行的异步函数
- * @returns {Promise<*>} fn 的返回值
- */
-let ollamaTail = Promise.resolve();
-function withOllamaLock(fn) {
-  const run = ollamaTail.then(fn, fn);
-  ollamaTail = run.catch(() => {});
-  return run;
-}
-
 /**
  * 调用该机器人自带的 OpenAI/Claude 兼容接口。
  * 缓存友好设计:
@@ -2615,30 +2740,74 @@ function withOllamaLock(fn) {
  *   (参考: Anthropic 官方 Prompt caching 文档, {"type":"ephemeral"} 5 分钟 TTL 自动续期)
  * - OpenAI 系 API: 自动前缀缓存(≥1024 tokens), 无需额外字段
  * - 解析 usage 中的缓存命中数字并打印, 便于观察命中率
- * - 本地 Ollama(OpenAI 兼容): 无 token 成本, 思考型模型(如 qwen3)需要更多输出配额,
- *   否则 max_tokens 会被"思考"耗尽导致 content 为空, 这里放大到 1200;
- *   注意: 不能对 qwen3 传 thinking:false——实测本机 Ollama 下该参数会导致模型
- *   把 token 全部消耗却不输出任何 content(空回复), 因此保持默认思考模式,
- *   思考内容在 reasoning 字段/正文中, 回复经 stripThinking 裁剪;
- *   走 withOllamaLock 串行互斥防 undici 300s 头超时, 超时放宽到 30 分钟(冷启动/纯 CPU 推理更慢)
  * @param {object} bot 机器人行(含 api_base_url/api_key/api_model)
  * @param {object[]} messages 消息数组(第一条为稳定 system)
- * @returns {Promise<string>} 回复文本(已裁剪思考)
+ * @returns {Promise<string>} 回复文本
  */
+// 图片扩展名 → MIME(多模态输入用)
+const EXT_TO_MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' };
+
+/**
+ * 读取 uploads/ 图片为 base64 data URL(多模态输入用)。
+ * 文件不存在/格式不支持/超过 maxBytes 均返回空串(降级为纯文本)。
+ * @param {string} filename uploads/ 下的文件名(如 msg_xxx.jpg)
+ * @param {number} maxBytes 大小上限, 默认 1MB(避免超模型输入限制)
+ * @returns {Promise<string>} data URL 或空串
+ */
+async function imageFileToDataUrl(filename, maxBytes = 1024 * 1024) {
+  if (!filename) return '';
+  const mime = EXT_TO_MIME[path.extname(filename).toLowerCase()];
+  if (!mime) return '';
+  try {
+    const buf = await fs.promises.readFile(path.join(UPLOAD_DIR, filename));
+    if (buf.length === 0 || buf.length > maxBytes) return '';
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  } catch {
+    return '';
+  }
+}
+
+/** 文本 + 可选图片 → OpenAI 多模态 content 数组; 无图时返回原文本字符串 */
+function buildMultimodalContent(text, imageDataUrl) {
+  if (!imageDataUrl) return text;
+  return [
+    { type: 'text', text },
+    { type: 'image_url', image_url: { url: imageDataUrl } },
+  ];
+}
+
+/** OpenAI content 数组 → Anthropic 格式(data URL → base64 image source) */
+function toAnthropicContent(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return content;
+  return content.map((part) => {
+    if (part && part.type === 'image_url' && part.image_url) {
+      const url = String(part.image_url.url || '');
+      const comma = url.indexOf(',');
+      const meta = comma > 0 ? url.slice(0, comma) : '';
+      const data = comma > 0 ? url.slice(comma + 1) : '';
+      const mediaType = /^data:(image\/\w+);/i.test(meta) ? meta.match(/^data:(image\/\w+);/i)[1] : 'image/jpeg';
+      return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
+    }
+    return part;
+  });
+}
+
 async function callAi(bot, messages) {
   const isAnthropic = /anthropic/i.test(bot.api_base_url || '');
-  const ollama = isOllamaBot(bot);
-  const body = { model: bot.api_model, messages, max_tokens: ollama ? 1200 : 600, temperature: 0.9 };
+  const body = { model: bot.api_model, messages, max_tokens: 600, temperature: 0.9 };
   // SSRF 兜底: 即使配置时校验被绕过(如 DNS 重绑定), 调用前再拒绝内网/私网地址。
-  // 平台自带的本地 Ollama(server_ollama=1)为受信内网后端, 不受此限制。
-  if (!bot.server_ollama && !(await isSafeOutboundUrl(bot.api_base_url))) {
+  if (!(await isSafeOutboundUrl(bot.api_base_url))) {
     throw new Error('机器人接口地址不允许访问内网/私网(防 SSRF)');
   }
-  if (isAnthropic && messages.length > 0 && messages[0].role === 'system') {
-    // 显式缓存断点: 只打在稳定 system 消息上, 保证前缀哈希跨调用一致
-    body.messages = messages.map((m, i) => (i === 0 ? { ...m, cache_control: { type: 'ephemeral' } } : m));
+  if (isAnthropic) {
+    // 多模态: content 数组转 Anthropic image source; 显式缓存断点只打在稳定 system 消息上
+    body.messages = messages.map((m, i) => ({
+      ...m,
+      content: toAnthropicContent(m.content),
+      ...(i === 0 && m.role === 'system' ? { cache_control: { type: 'ephemeral' } } : {}),
+    }));
   }
-  // 本地 Ollama 串行互斥(见 withOllamaLock 注释): 排队等待不计入下方超时, 只覆盖推理阶段
   const doFetch = () => fetch(`${bot.api_base_url.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -2646,10 +2815,9 @@ async function callAi(bot, messages) {
       'Authorization': `Bearer ${bot.api_key}`,
     },
     body: JSON.stringify(body),
-    // 本地思考模型单次推理可能极慢(纯 CPU 下可长达数十分钟), 超时放宽到 30 分钟防误杀
-    signal: AbortSignal.timeout(ollama ? 1800000 : 120000),
+    signal: AbortSignal.timeout(120000),
   });
-  const res = await (ollama ? withOllamaLock(doFetch) : doFetch());
+  const res = await doFetch();
   if (!res.ok) {
     // 读取响应体, 把具体失败原因带回(401 Key无效 / 404 模型不存在 / 429 限流余额不足等)
     let reason = `AI 服务响应异常(${res.status})`;
@@ -2668,8 +2836,7 @@ async function callAi(bot, messages) {
   if (cachedTokens > 0) console.log(`[ai] ${bot.username} 前缀缓存命中 ${cachedTokens} tokens`);
   const reply = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
   if (typeof reply !== 'string' || !reply.trim()) throw new Error('AI 返回内容为空');
-  // 思考模型可能把推理过程写进正文(thinking:false 未生效时), 展示前统一裁剪
-  return stripThinking(reply).slice(0, 2000);
+  return reply.slice(0, 2000);
 }
 
 /** 机器人的默认人设兜底 */
@@ -2715,8 +2882,8 @@ function chargeForReply(bot, senderId) {
       return { ok: false, note: `（回复需要 ${bot.price_per_reply} CCB/条，余额不足）` };
     }
     db.addWallet(senderId, -bot.price_per_reply);
-    // 官方模型与服务端 Ollama 收入归平台, 不发放给创建者
-    if (!bot.is_official && !bot.server_ollama) db.addWallet(bot.creator_id, bot.price_per_reply);
+    // 官方模型收入归平台, 不发放给创建者
+    if (!bot.is_official) db.addWallet(bot.creator_id, bot.price_per_reply);
     return { ok: true };
   }
   // hybrid(订阅+按条): 已订阅免费; 未订阅按条扣费; 未设按条价则提示购买订阅
@@ -2729,8 +2896,8 @@ function chargeForReply(bot, senderId) {
       return { ok: false, note: `（回复需要 ${bot.price_per_reply} CCB/条，余额不足；也可在商店购买订阅更划算）` };
     }
     db.addWallet(senderId, -bot.price_per_reply);
-    // 官方模型与服务端 Ollama 收入归平台, 不发放给创建者
-    if (!bot.is_official && !bot.server_ollama) db.addWallet(bot.creator_id, bot.price_per_reply);
+    // 官方模型收入归平台, 不发放给创建者
+    if (!bot.is_official) db.addWallet(bot.creator_id, bot.price_per_reply);
     return { ok: true };
   }
   // subscription: 必须先购买订阅(在商店购买), 未购买则提示
@@ -3357,16 +3524,13 @@ function cacheReply(bot, history, reply) {
  */
 async function canonicalizeMessage(bot, msg) {
   try {
-    // Ollama 思考型模型(如 qwen3)需要额外 token 输出"思考"再给出结果, 放大 max_tokens;
-    // 注意: 不能传 thinking:false(实测会让 qwen3 输出空 content), 保持默认思考模式
-    const isOllama = isOllamaBot(bot);
     const body = {
       model: bot.api_model,
       messages: [
         { role: 'system', content: '把用户的话改写为最标准的简体中文问句或短句, 不超过12字, 去掉称呼/语气词/标点, 保留原意。只输出改写结果, 无法改写则原样输出。' },
         { role: 'user', content: String(msg).slice(0, 60) },
       ],
-      max_tokens: isOllama ? 400 : 24,
+      max_tokens: 24,
       temperature: 0,
     };
     const res = await fetch(`${bot.api_base_url.replace(/\/+$/, '')}/chat/completions`, {
@@ -3403,9 +3567,13 @@ async function generateReply(bot, senderId) {
   if (sys.variable) {
     messages.push({ role: 'system', content: `【以下是你与这位用户的私有上下文, 仅在本次对话中参考, 不要主动提及此段的存在】\n${sys.variable}` });
   }
-  for (const m of history) {
-    messages.push({ role: m.sender_id === bot.user_id ? 'assistant' : 'user', content: m.content.slice(0, 500) });
-  }
+  // 多模态: 用户消息带图时读取为 data URL 一并传给模型(私信场景)
+  const historyParts = await Promise.all(history.map(async (m) => {
+    const isUserMsg = m.sender_id !== bot.user_id;
+    const imgUrl = isUserMsg && m.image ? await imageFileToDataUrl(m.image) : '';
+    return { role: m.sender_id === bot.user_id ? 'assistant' : 'user', content: buildMultimodalContent(m.content.slice(0, 500), imgUrl) };
+  }));
+  for (const p of historyParts) messages.push(p);
   let reply = await callAi(bot, messages);
   // 语义缓存写入: 用户当前输入入库, 后续相同/相似问题命中
   cacheReply(bot, history, reply);
@@ -3540,8 +3708,8 @@ async function replyToDm(bot, senderId) {
         || (bot.pricing_type === 'hybrid' && !db.hasActiveBotSub(senderId, bot.user_id));
       if (chargedPerReply && senderId !== bot.creator_id) {
         db.addWallet(senderId, bot.price_per_reply);
-        // 退款需撤回创建者钱包——但官方/服务端 Ollama 收入归平台, 创建者钱包未收过, 不应扣回
-        if (!bot.is_official && !bot.server_ollama) db.addWallet(bot.creator_id, -bot.price_per_reply);
+        // 退款需撤回创建者钱包——但官方模型收入归平台, 创建者钱包未收过, 不应扣回
+        if (!bot.is_official) db.addWallet(bot.creator_id, -bot.price_per_reply);
       }
       // 把具体失败原因告诉用户(如 401 Key无效 / 429 限流余额不足), 便于排查
       db.sendMessage(bot.user_id, senderId, `（AI 暂时无法回复：${err.message.slice(0, 200)}）`, '');
@@ -3552,7 +3720,7 @@ async function replyToDm(bot, senderId) {
 }
 
 /** 以机器人身份生成一条评论(帖子评论/评论回复共用) */
-async function generateComment(bot, context) {
+async function generateComment(bot, context, imageDataUrl = '') {
   const messages = [
     {
       role: 'system',
@@ -3560,7 +3728,7 @@ async function generateComment(bot, context) {
         '\n\n你是该平台的一位用户，正在浏览社区内容。请以第一人称发表一条自然、简短的评论（10~80 字），贴合人设与语境。只输出评论内容。' +
         '\n若想给相关的帖子或评论点赞，可在评论末尾附加 [LIKE:帖子ID] 或 [CLIKE:评论ID]（系统会自动执行并隐藏标记）。',
     },
-    { role: 'user', content: context },
+    { role: 'user', content: buildMultimodalContent(context, imageDataUrl) },
   ];
   const raw = await callAi(bot, messages);
   // 解析并执行 AI 点赞动作, 剥离标记后作为最终评论
@@ -3581,14 +3749,14 @@ const botGroupCooldown = new Map();
 const groupReplyBusy = new Set();
 
 /** 以机器人身份生成一条群回复 */
-async function generateGroupReply(bot, context) {
+async function generateGroupReply(bot, context, imageDataUrl = '') {
   const messages = [
     {
       role: 'system',
       content: botPersona(bot) + buildStoreContext() +
         '\n\n你正在一个群里聊天。请自然、简短地回应（10~80 字），贴合人设与语境，像真实群友一样。只输出回复内容。',
     },
-    { role: 'user', content: context },
+    { role: 'user', content: buildMultimodalContent(context, imageDataUrl) },
   ];
   return callAi(bot, messages);
 }
@@ -3603,7 +3771,9 @@ async function replyInGroup(bot, groupId, triggerMsg) {
       .filter((m) => m.id !== triggerMsg.id).slice(-8);
     const ctx = recent.map((m) => `${m.sender_name}: ${m.content.slice(0, 200)}`).join('\n');
     const prompt = `群聊最近消息:\n${ctx || '(空)'}\n\n${triggerMsg.sender_name} 刚发了消息: ${triggerMsg.content.slice(0, 300)}`;
-    const reply = await generateGroupReply(bot, prompt);
+    // 多模态: 用户刚发的群消息带图时一并传给模型
+    const imgUrl = triggerMsg.image ? await imageFileToDataUrl(triggerMsg.image) : '';
+    const reply = await generateGroupReply(bot, prompt, imgUrl);
     db.sendGroupMessage(groupId, bot.user_id, reply.slice(0, 500), '');
     console.log('[ai]', bot.username, '在群', groupId, '回复');
   } catch (err) {
@@ -3699,13 +3869,18 @@ async function engageOne(bot) {
   }
 
   // 3) 新帖子互动: 从最近无机器人评论的帖子中随机挑几条回复(受评论回复概率控制)
+  // 带图帖子用独立低概率(ai_post_image_rate, 默认 4%), 避免 AI 频繁浏览图片帖
+  const imgPostRate = Number(aiSetting('ai_post_image_rate', '4'));
   const candidates = db.getPostsToCommentOn(bot.user_id, ENGAGE_POST_CANDIDATES);
   const picked = shuffle(candidates).slice(0, ENGAGE_POST_MAX);
   for (const post of picked) {
-    if (Math.random() * 100 >= commentRate) continue;
+    const isImgPost = !!post.image;
+    const rate = isImgPost ? imgPostRate : commentRate;
+    if (Math.random() * 100 >= rate) continue;
     const author = db.getUserById(post.user_id);
     try {
-      const reply = await generateComment(bot, `帖子ID: ${post.id}\n作者 @${author ? author.username : '用户'} 的帖子: ${post.content.slice(0, 300)}`);
+      const imgUrl = isImgPost ? await imageFileToDataUrl(post.image) : '';
+      const reply = await generateComment(bot, `帖子ID: ${post.id}\n作者 @${author ? author.username : '用户'} 的帖子: ${post.content.slice(0, 300)}`, imgUrl);
       db.addComment(post.id, bot.user_id, reply.slice(0, 280), null);
     } catch (err) {
       console.error('[ai]', bot.username, '帖子互动失败:', err.message);
@@ -3816,8 +3991,8 @@ async function handleBotCreate(req, res) {
 
   const cfg = parseBotConfig(body);
   if (cfg.error) return fail(res, 400, cfg.error);
-  // SSRF 防护: 用户自定义 API 地址不允许指向内网/私网(服务端 Ollama 由平台控制, 跳过)
-  if (!cfg.use_server_ollama && cfg.api_base_url) {
+  // SSRF 防护: API 地址不允许指向内网/私网
+  if (cfg.api_base_url) {
     const errS = await assertSafeBotUrl(cfg.api_base_url);
     if (errS) return fail(res, 400, errS);
   }
@@ -3827,8 +4002,6 @@ async function handleBotCreate(req, res) {
     cfg.api_base_url, cfg.api_key, cfg.api_model,
     cfg.pricing_type, cfg.price_per_reply, cfg.subscription_price
   );
-  // 用户选择使用服务端 Ollama: 记录标记(收入归平台, 见 chargeForReply)
-  if (cfg.use_server_ollama) db.updateBotServerOllama(botId, 1);
   // 管理员可上架官方模型(API 由平台提供, 收入归平台)
   if (user.is_admin === 1 && body.official) {
     db.updateBotOfficial(botId, 1);
@@ -3836,49 +4009,9 @@ async function handleBotCreate(req, res) {
   ok(res, { id: botId, username: name });
 }
 
-/**
- * 取服务端 Ollama 模型的按条计费价格(CCB/条)。
- * 价格表 SERVER_OLLAMA_PRICE 精确匹配模型名, 未配置的模型用默认价。
- * @param {string} model 模型名(如 qwen3:4b)
- * @returns {number} 按条价格
- */
-function serverOllamaPrice(model) {
-  return SERVER_OLLAMA_PRICE[model] || SERVER_OLLAMA_DEFAULT_PRICE;
-}
-
-/**
- * 拉取服务端 Ollama 的模型列表(供创建/编辑陪聊时用户选择)。
- * 服务端发起请求(而非前端直连), 局域网用户无需在本机安装 Ollama。
- * @returns {Promise<{ok: boolean, models?: string[], error?: string}>}
- */
-async function serverOllamaModels() {
-  try {
-    // Ollama 原生接口为 /api/tags(非 OpenAI 兼容路径), 与服务端地址同源
-    const tagsUrl = SERVER_OLLAMA_URL.replace(/\/+$/, '').replace(/\/v1$/i, '') + '/api/tags';
-    const r = await fetch(tagsUrl, { signal: AbortSignal.timeout(5000) });
-    if (!r.ok) return { ok: false, error: `Ollama 未响应(${r.status})` };
-    const data = await r.json();
-    const models = (data.models || []).map((m) => m.name);
-    return { ok: true, models };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-}
-
-/**
- * GET /api/ollama-models: 返回服务端 Ollama 可用模型及各自按条价格。
- * 供前端"使用服务端 Ollama"下拉选择模型(价格随模型变化, 收入归平台)。
- */
-async function handleOllamaModels(req, res) {
-  const r = await serverOllamaModels();
-  if (!r.ok) return fail(res, 502, `服务端 Ollama 不可用：${r.error}`);
-  ok(res, { models: r.models.map((m) => ({ name: m, price: serverOllamaPrice(m) })) });
-}
-
 /** 解析并校验机器人配置字段(API 与计费) */
 function parseBotConfig(body) {
   const cfg = {
-    use_server_ollama: body.use_server_ollama === true || body.use_server_ollama === 'true' || body.use_server_ollama === 1,
     api_base_url: typeof body.api_base_url === 'string' ? body.api_base_url.trim() : '',
     api_key: typeof body.api_key === 'string' ? body.api_key.trim() : '',
     api_model: typeof body.api_model === 'string' ? body.api_model.trim() : '',
@@ -3886,17 +4019,6 @@ function parseBotConfig(body) {
     price_per_reply: Number(body.price_per_reply) || 0,
     subscription_price: Number(body.subscription_price) || 0,
   };
-  // 使用服务端 Ollama: 忽略用户填写的 API 配置, 强制使用平台后端(模型可自选, 按模型定价, 收入归平台)
-  if (cfg.use_server_ollama) {
-    cfg.api_base_url = SERVER_OLLAMA_URL;
-    cfg.api_key = SERVER_OLLAMA_KEY;
-    // 模型: 优先用用户所选模型, 未填或未知时兜底默认模型
-    const chosen = (typeof body.api_model === 'string' ? body.api_model.trim() : '') || SERVER_OLLAMA_DEFAULT_MODEL;
-    cfg.api_model = chosen;
-    cfg.pricing_type = 'per_reply';
-    cfg.price_per_reply = serverOllamaPrice(chosen);
-    cfg.subscription_price = 0;
-  }
   if (cfg.api_base_url && !/^https?:\/\//i.test(cfg.api_base_url)) {
     return { error: '接口地址需以 http(s):// 开头' };
   }
@@ -3958,33 +4080,13 @@ async function handleBotPatch(req, res, segs) {
   }
   if (body.price_per_reply !== undefined) fields.price_per_reply = Number(body.price_per_reply) || 0;
   if (body.subscription_price !== undefined) fields.subscription_price = Number(body.subscription_price) || 0;
-  // 切换"使用服务端 Ollama": 开启时强制平台后端配置, 关闭时保留用户自定义 API(未传的字段沿用原值)
-  if (body.use_server_ollama !== undefined) {
-    fields.use_server_ollama = body.use_server_ollama === true || body.use_server_ollama === 'true' || body.use_server_ollama === 1;
-    if (fields.use_server_ollama) {
-      // 开启服务端 Ollama: 模型用所选模型(未选则默认), 按模型定价(收入归平台), 忽略用户填写的 API
-      const chosen = (typeof body.api_model === 'string' ? body.api_model.trim() : '')
-        || (bot.api_model || SERVER_OLLAMA_DEFAULT_MODEL);
-      fields.api_base_url = SERVER_OLLAMA_URL;
-      fields.api_key = SERVER_OLLAMA_KEY;
-      fields.api_model = chosen;
-      fields.pricing_type = 'per_reply';
-      fields.price_per_reply = serverOllamaPrice(chosen);
-      fields.subscription_price = 0;
-    }
-  }
   if (Object.keys(fields).length > 0) {
     const cfg = parseBotConfig({ ...fields, pricing_type: fields.pricing_type || bot.pricing_type });
     if (cfg.error) return fail(res, 400, cfg.error);
-    // SSRF 防护: 用户自定义 API 地址不允许指向内网/私网(服务端 Ollama 由平台控制, 跳过)
-    if (!cfg.use_server_ollama && cfg.api_base_url) {
+    // SSRF 防护: API 地址不允许指向内网/私网
+    if (cfg.api_base_url) {
       const errS = await assertSafeBotUrl(cfg.api_base_url);
       if (errS) return fail(res, 400, errS);
-    }
-    // use_server_ollama 开关需单独落库(不在 updateBotConfig 的字段内)
-    if (fields.use_server_ollama !== undefined) {
-      db.updateBotServerOllama(botId, fields.use_server_ollama ? 1 : 0);
-      delete fields.use_server_ollama;
     }
     db.updateBotConfig(botId, { ...fields, pricing_type: fields.pricing_type || bot.pricing_type });
   }
@@ -4231,9 +4333,14 @@ async function route(req, res) {
     if (req.method === 'PATCH' && sub === 'admin' && segs[2] === 'users' && segs.length === 4) return await handleAdminUserPatch(req, res, segs);
     if (req.method === 'DELETE' && sub === 'admin' && segs[2] === 'users' && segs.length === 4) return handleAdminUserDelete(req, res, segs);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'users' && segs.length === 5 && segs[4] === 'penalty') return await handleAdminPenalty(req, res, segs);
+    if (req.method === 'POST' && sub === 'admin' && segs[2] === 'users' && segs.length === 5 && segs[4] === 'grant-item') return await handleAdminGrantItem(req, res, segs);
+    if (req.method === 'POST' && sub === 'admin' && segs[2] === 'users' && segs.length === 5 && segs[4] === 'grant-stock') return await handleAdminGrantStock(req, res, segs);
+    if (req.method === 'POST' && sub === 'admin' && segs[2] === 'users' && segs.length === 5 && segs[4] === 'grant-bot-sub') return await handleAdminGrantBotSub(req, res, segs);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'conversations') return handleAdminConversations(req, res);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'messages') return handleAdminMessages(req, res);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'items-all') return handleAdminItemsAll(req, res);
+    if (req.method === 'GET' && sub === 'admin' && segs[2] === 'holdings' && segs.length === 3) return handleAdminHoldings(req, res);
+    if (req.method === 'POST' && sub === 'admin' && segs[2] === 'broadcast' && segs.length === 3) return await handleAdminBroadcast(req, res);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'tickets' && segs.length === 3) return handleAdminTickets(req, res);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'tickets' && segs.length === 5 && segs[4] === 'reply') return await handleAdminTicketReply(req, res, segs);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'reports' && segs.length === 3) return handleAdminReports(req, res);
@@ -4254,9 +4361,6 @@ async function route(req, res) {
     if (req.method === 'POST' && sub === 'bots' && segs.length === 4 && segs[3] === 'toggle') return await handleBotToggle(req, res, segs);
     if (req.method === 'POST' && sub === 'bots' && segs.length === 4 && segs[3] === 'subscribe') return await handleBotSubscribe(req, res, segs);
     if (req.method === 'POST' && sub === 'bots' && segs.length === 5 && segs[3] === 'memory' && segs[4] === 'clear') return await handleBotMemoryClear(req, res, segs);
-
-    // 服务端 Ollama 模型列表(创建/编辑陪聊用, 价格随模型)
-    if (req.method === 'GET' && sub === 'ollama-models' && segs.length === 2) return await handleOllamaModels(req, res);
 
     // 用户 / 搜索
     if (req.method === 'GET' && sub === 'users' && segs.length === 2) return handleRecentUsers(req, res);
@@ -4397,8 +4501,9 @@ function getLanIps() {
     .map((c) => c.addr);
 }
 
-// 启动前确保管理员账号存在
+// 启动前确保管理员账号存在, 并清理过期会话
 ensureAdmin();
+db.pruneExpiredSessions();
 // 首次启动预置官方股票(仅当库中完全没有股票时)
 seedOfficialStocks();
 // 语义缓存建表(幂等, 复用主数据库连接, 数据随主库持久化)

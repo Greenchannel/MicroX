@@ -639,26 +639,14 @@ async function loadMyBots() {
         <div class="sell-form-row">
           <input id="bot-name" placeholder="名称(2~20位, 唯一)" maxlength="20" style="flex:1">
         </div>
-        <div class="ds-row" style="gap:8px;margin-bottom:8px">
-          <button class="btn btn-primary" id="bot-mode-api" type="button">连接 API</button>
-          <button class="btn btn-ghost" id="bot-mode-server" type="button">服务端 Ollama 模型</button>
-        </div>
         <div id="bot-api-panel">
           <div class="sell-form-row">
             <input id="bot-api-url" placeholder="API 地址 Base URL，如 https://api.openai.com/v1（Claude 用 https://api.anthropic.com/v1）" style="flex:1;min-width:200px">
-            <button class="btn btn-ghost" id="bot-ollama" style="padding:6px 14px;font-size:12px;flex-shrink:0">连接本地 Ollama</button>
           </div>
           <div class="sell-form-row">
             <input id="bot-api-key" type="password" placeholder="API Key">
             <input id="bot-api-model" placeholder="模型，如 gpt-4o / claude-sonnet-4" style="max-width:240px">
           </div>
-        </div>
-        <div id="bot-server-panel" hidden>
-          <div class="sell-form-row">
-            <select id="bot-server-model" style="flex:1;min-width:200px"><option value="">加载模型中…</option></select>
-            <span id="bot-server-price" style="font-size:12px;color:var(--muted);white-space:nowrap;padding-right:6px"></span>
-          </div>
-          <div style="font-size:12px;color:var(--muted)">服务端 Ollama（平台提供推理，收入归平台）</div>
         </div>
         <div class="sell-form-row">
           <select id="bot-pricing">
@@ -688,7 +676,7 @@ async function loadMyBots() {
             <div class="name">${escapeHtml(b.username)} ${botBadgeHtml({ account_type: 'bot' }, b.is_official === 1)}
               ${b.status === 'disabled' ? '<span class="penalty-tag muted">已下架</span>' : '<span class="badge-pending">上架中</span>'}
             </div>
-            <div class="sub">计费: ${priceLabel(b)} · 模型: ${escapeHtml(b.api_model || '未配置')} · API: ${b.api_base_url ? (b.server_ollama === 1 ? '服务端 Ollama' : '已配置') : '未配置'}</div>
+            <div class="sub">计费: ${priceLabel(b)} · 模型: ${escapeHtml(b.api_model || '未配置')} · API: ${b.api_base_url ? '已配置' : '未配置'}</div>
             <textarea data-bot-persona="${b.user_id}" rows="2" maxlength="2000" style="width:100%;background:#000;border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:13px;color:var(--text);resize:vertical;outline:none">${escapeHtml(b.persona)}</textarea>
             <div class="quick-edit">
               <select data-bot-ptype="${b.user_id}">${ptypeOptions(b)}</select>
@@ -699,8 +687,7 @@ async function loadMyBots() {
             </div>
             <div data-bot-apibox="${b.user_id}" hidden>
               <div class="sell-form-row">
-                <input data-bot-url="${b.user_id}" placeholder="Base URL" value="${escapeHtml(b.api_base_url)}">
-                <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px;flex-shrink:0" data-bot-ollama="${b.user_id}">填入Ollama</button>
+                <input data-bot-url="${b.user_id}" placeholder="Base URL" value="${escapeHtml(b.api_base_url)}" style="flex:1">
               </div>
               <div class="sell-form-row">
                 <input data-bot-key="${b.user_id}" type="password" placeholder="API Key(留空不修改)">
@@ -711,15 +698,6 @@ async function loadMyBots() {
               <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:6px">
                 <input type="checkbox" data-bot-official="${b.user_id}" ${b.is_official === 1 ? 'checked' : ''}> 官方模型（保存时生效）
               </label>` : ''}
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:6px">
-              <input type="checkbox" data-bot-sollama="${b.user_id}" ${b.server_ollama === 1 ? 'checked' : ''}> 服务端 Ollama（收入归平台，价格随模型）
-            </label>
-            <div class="sell-form-row" data-bot-sollama-row="${b.user_id}" ${b.server_ollama === 1 ? '' : 'hidden'}>
-              <select data-bot-sollama-model="${b.user_id}" style="flex:1;min-width:160px">
-                <option value="${escapeHtml(b.api_model || '')}">${escapeHtml(b.api_model || '未选择')}（保存时生效）</option>
-              </select>
-              <span data-bot-sollama-price="${b.user_id}" style="font-size:12px;color:var(--muted);white-space:nowrap;padding-right:6px"></span>
-            </div>
             <div class="quick-edit">
               <button class="btn btn-ghost" style="padding:5px 14px;font-size:12px" data-bot-toggle="${b.user_id}" data-status="${b.status}">${b.status === 'active' ? '下架' : '重新上架'}</button>
               <a class="btn btn-ghost" style="padding:5px 14px;font-size:12px" href="#/messages/${encodeURIComponent(b.username)}">开始聊天</a>
@@ -731,107 +709,15 @@ async function loadMyBots() {
     }
     box.innerHTML = html;
 
-    // 从本地 Ollama 拉取模型列表并填充 API 配置(Ollama 无需真实 API Key)
-    const fillOllama = async (setConfig) => {
-      try {
-        const r = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(4000) });
-        if (!r.ok) throw new Error('Ollama 未响应(' + r.status + ')，请确认已启动');
-        const data = await r.json();
-        const models = (data.models || []).map((m) => m.name);
-        if (!models.length) throw new Error('Ollama 暂无可用模型，请先执行 ollama pull <模型>');
-        setConfig(models);
-        toast('已连接 Ollama，模型: ' + models[0]);
-      } catch (err) {
-        toast('连接 Ollama 失败：' + err.message, true);
-      }
-    };
-
-    // 创建陪聊
-    $('#bot-ollama').addEventListener('click', () => {
-      fillOllama((models) => {
-        $('#bot-api-url').value = 'http://127.0.0.1:11434/v1';
-        $('#bot-api-key').value = 'ollama';
-        $('#bot-api-model').value = models[0];
-      });
-    });
-
-    // 服务端 Ollama 模型列表缓存(创建与编辑共用)
-    let serverOllamaModels = [];
-    const loadServerOllamaModels = async () => {
-      try {
-        const d = await api('GET', '/api/ollama-models');
-        serverOllamaModels = d.models || [];
-      } catch (err) {
-        serverOllamaModels = [];
-      }
-      return serverOllamaModels;
-    };
-
-    // 创建表单: 两个菜单(Tab)切换 —— 连接 API / 服务端 Ollama 模型
-    const apiPanel = document.getElementById('bot-api-panel');
-    const serverPanel = document.getElementById('bot-server-panel');
-    const modeApiBtn = document.getElementById('bot-mode-api');
-    const modeServerBtn = document.getElementById('bot-mode-server');
-    let createMode = 'api'; // 'api' | 'server'
-    const setCreateMode = async (mode) => {
-      createMode = mode;
-      const isServer = mode === 'server';
-      if (modeApiBtn) {
-        modeApiBtn.className = isServer ? 'btn btn-ghost' : 'btn btn-primary';
-      }
-      if (modeServerBtn) {
-        modeServerBtn.className = isServer ? 'btn btn-primary' : 'btn btn-ghost';
-      }
-      if (apiPanel) apiPanel.hidden = isServer;
-      if (serverPanel) serverPanel.hidden = !isServer;
-      if (isServer) {
-        // 服务端模式: 计费锁定为按条, 价格随模型由后端计算
-        const pricing = document.getElementById('bot-pricing');
-        if (pricing) pricing.value = 'per_reply';
-        const price = document.getElementById('bot-price');
-        if (price) price.value = '';
-        const priceSub = document.getElementById('bot-price-sub');
-        if (priceSub) priceSub.value = '';
-        if (serverOllamaModels.length === 0) await loadServerOllamaModels();
-        const modelSel = document.getElementById('bot-server-model');
-        const priceEl = document.getElementById('bot-server-price');
-        if (modelSel) {
-          if (serverOllamaModels.length) {
-            modelSel.innerHTML = serverOllamaModels.map((m) =>
-              `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}（${m.price} CCB/条）</option>`).join('');
-            modelSel.value = serverOllamaModels[0].name;
-            const m = serverOllamaModels[0];
-            if (priceEl) priceEl.textContent = m ? m.price + ' CCB/条' : '';
-          } else {
-            modelSel.innerHTML = '<option value="">暂无可用模型（服务端 Ollama 未就绪）</option>';
-            if (priceEl) priceEl.textContent = '';
-          }
-        }
-      }
-    };
-    if (modeApiBtn) modeApiBtn.addEventListener('click', () => setCreateMode('api'));
-    if (modeServerBtn) modeServerBtn.addEventListener('click', () => setCreateMode('server'));
-    const serverModelEl = document.getElementById('bot-server-model');
-    if (serverModelEl) {
-      serverModelEl.addEventListener('change', () => {
-        const m = serverOllamaModels.find((x) => x.name === serverModelEl.value);
-        const priceEl = document.getElementById('bot-server-price');
-        if (m && priceEl) priceEl.textContent = m.price + ' CCB/条';
-      });
-    }
-
     // 创建
     $('#bot-create').addEventListener('click', async () => {
       try {
-        const useServer = createMode === 'server';
-        const serverModel = document.getElementById('bot-server-model');
         await api('POST', '/api/bots', {
           name: $('#bot-name').value.trim(),
           persona: $('#bot-persona').value.trim(),
-          use_server_ollama: useServer,
-          api_base_url: useServer ? '' : $('#bot-api-url').value.trim(),
-          api_key: useServer ? '' : $('#bot-api-key').value.trim(),
-          api_model: useServer ? (serverModel ? serverModel.value : '') : $('#bot-api-model').value.trim(),
+          api_base_url: $('#bot-api-url').value.trim(),
+          api_key: $('#bot-api-key').value.trim(),
+          api_model: $('#bot-api-model').value.trim(),
           pricing_type: $('#bot-pricing').value,
           price_per_reply: $('#bot-pricing').value === 'per_reply' || $('#bot-pricing').value === 'hybrid' ? Number($('#bot-price').value) : 0,
           subscription_price: $('#bot-pricing').value === 'subscription' || $('#bot-pricing').value === 'hybrid' ? Number($('#bot-price-sub').value) : 0,
@@ -852,57 +738,6 @@ async function loadMyBots() {
       });
     });
 
-    // 每个陪聊的服务端 Ollama 开关(初始状态据库中标记渲染)
-    box.querySelectorAll('[data-bot-sollama]').forEach((cb) => {
-      const id = cb.dataset.botSollama;
-      const b = data.bots.find((x) => String(x.user_id) === String(id));
-      setupBotSollama(id, b ? b.api_model : '');
-    });
-
-    // 已有陪聊一键填入本地 Ollama
-    box.querySelectorAll('[data-bot-ollama]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = btn.dataset.botOllama;
-        fillOllama((models) => {
-          box.querySelector('[data-bot-url="' + id + '"]').value = 'http://127.0.0.1:11434/v1';
-          box.querySelector('[data-bot-key="' + id + '"]').value = 'ollama';
-          box.querySelector('[data-bot-model="' + id + '"]').value = models[0];
-        });
-      });
-    });
-
-    // 编辑表单: 服务端 Ollama 开关 —— 勾选时拉取模型列表填充下拉并显示对应价格
-    function setupBotSollama(id, currentModel) {
-      const cb = box.querySelector('[data-bot-sollama="' + id + '"]');
-      if (!cb) return;
-      const row = box.querySelector('[data-bot-sollama-row="' + id + '"]');
-      const sel = box.querySelector('[data-bot-sollama-model="' + id + '"]');
-      const priceEl = box.querySelector('[data-bot-sollama-price="' + id + '"]');
-      const refresh = async () => {
-        if (serverOllamaModels.length === 0) await loadServerOllamaModels();
-        if (serverOllamaModels.length) {
-          const current = sel.value || currentModel || serverOllamaModels[0].name;
-          sel.innerHTML = serverOllamaModels.map((m) =>
-            `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}（${m.price} CCB/条）</option>`).join('');
-          if (serverOllamaModels.some((m) => m.name === current)) sel.value = current;
-          const m = serverOllamaModels.find((x) => x.name === sel.value);
-          if (priceEl) priceEl.textContent = m ? m.price + ' CCB/条' : '';
-        } else {
-          sel.innerHTML = `<option value="${escapeHtml(currentModel || '')}">${escapeHtml(currentModel || '获取失败')}</option>`;
-          if (priceEl) priceEl.textContent = '';
-        }
-      };
-      if (cb.checked) refresh();
-      cb.addEventListener('change', () => {
-        if (row) row.hidden = !cb.checked;
-        if (cb.checked) refresh();
-      });
-      sel.addEventListener('change', () => {
-        const m = serverOllamaModels.find((x) => x.name === sel.value);
-        if (priceEl) priceEl.textContent = m ? m.price + ' CCB/条' : '';
-      });
-    };
-
     // 保存(人设/计费/API 配置)
     box.querySelectorAll('[data-bot-save]').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -917,21 +752,13 @@ async function loadMyBots() {
           subscription_price: ptype === 'subscription' || ptype === 'hybrid' ? priceSub : 0,
           official: me.is_admin === 1 && box.querySelector('[data-bot-official="' + id + '"]')
             ? box.querySelector('[data-bot-official="' + id + '"]').checked : undefined,
-          use_server_ollama: box.querySelector('[data-bot-sollama="' + id + '"]').checked,
         };
-        // 服务端 Ollama: 模型取自下拉(未选则沿用当前), 价格由后端按模型计算
-        if (payload.use_server_ollama) {
-          const sm = box.querySelector('[data-bot-sollama-model="' + id + '"]');
-          if (sm && sm.value) payload.api_model = sm.value;
-        }
         const url = box.querySelector('[data-bot-url="' + id + '"]').value.trim();
         const key = box.querySelector('[data-bot-key="' + id + '"]').value.trim();
         const model = box.querySelector('[data-bot-model="' + id + '"]').value.trim();
-        if (!payload.use_server_ollama) {
-          if (url) payload.api_base_url = url;
-          if (key) payload.api_key = key;
-          if (model) payload.api_model = model;
-        }
+        if (url) payload.api_base_url = url;
+        if (key) payload.api_key = key;
+        if (model) payload.api_model = model;
         try {
           await api('PATCH', '/api/bots/' + id, payload);
           toast('已保存');
@@ -1852,7 +1679,7 @@ function storeItemCard(item) {
       <div class="store-meta">${owner}<span class="store-tag">${TYPE_LABELS[item.type] || item.type}</span><span class="store-tag">已售 ${item.sales}</span></div>
       <div class="store-meta" style="font-weight:600">${priceHtml}</div>
       ${buyHtml}
-      ${owned && item.ownedMode ? `<div class="store-owned">已拥有（${item.ownedMode === 'subscribe' ? '订阅中' : '永久买断'}）</div>` : ''}
+      ${owned && item.ownedMode ? `<div class="store-owned">已拥有（${item.ownedMode === 'subscribe' ? '订阅中' : item.ownedMode === 'grant' ? '管理员发放' : '永久买断'}）</div>` : ''}
     </div>`;
 }
 
@@ -1892,7 +1719,7 @@ async function loadStoreMine() {
           ${thumb}
           <div class="info">
             <div class="name">${escapeHtml(it.name)}</div>
-            <div class="sub">${label} · ${it.mode === 'subscribe' ? `订阅至 ${it.expires_at.slice(0, 10)}` : '永久买断'}</div>
+            <div class="sub">${label} · ${it.mode === 'subscribe' ? `订阅至 ${it.expires_at.slice(0, 10)}` : it.mode === 'grant' ? '管理员发放' : '永久买断'}</div>
           </div>
           ${actionBtn}
           ${it.type !== 'file' ? `<button class="btn btn-ghost" style="padding:6px 14px;font-size:12px" data-action="unequip" data-type="${it.type}">卸下</button>` : ''}
@@ -2475,18 +2302,58 @@ function renderAdminPage() {
       <button class="admin-tab" data-tab="ai">AI互动</button>
       <button class="admin-tab" data-tab="store">商品</button>
       <button class="admin-tab" data-tab="notice">公告</button>
+      <button class="admin-tab" data-tab="broadcast">官方广播</button>
     </div>
     <div id="admin-content"></div>`;
 
   $('#main').querySelectorAll('.admin-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       $('#main').querySelectorAll('.admin-tab').forEach((t) => t.classList.toggle('active', t === tab));
-      const map = { users: renderAdminUsers, dm: renderAdminDm, tickets: renderAdminTickets, reports: renderAdminReports, agents: renderAdminAgents, ai: renderAdminAi, store: renderAdminStore, notice: renderAdminNotices };
+      const map = { users: renderAdminUsers, dm: renderAdminDm, tickets: renderAdminTickets, reports: renderAdminReports, agents: renderAdminAgents, ai: renderAdminAi, store: renderAdminStore, notice: renderAdminNotices, broadcast: renderAdminBroadcast };
       (map[tab.dataset.tab] || renderAdminUsers)();
     });
   });
 
   renderAdminUsers();
+}
+
+// --- 官方广播 ---
+
+/** 官方广播: 选中的官方 AI 发帖 + 群发私信(内容相同, 不调用 AI API) */
+async function renderAdminBroadcast() {
+  const box = $('#admin-content');
+  box.innerHTML = '<div class="loading">加载中…</div>';
+  try {
+    const data = await api('GET', '/api/bots');
+    const bots = data.bots.filter((b) => b.is_official === 1);
+    box.innerHTML = `
+      <div class="store-section-title">选择官方 AI（它们将发帖并给所有用户发私信，不调用 AI API）</div>
+      ${bots.length === 0 ? emptyHtml('暂无官方 AI（可在 用户→陪聊管理 里把陪聊设为官方）') : bots.map((b) => `
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer">
+          <input type="checkbox" class="bc-bot" value="${b.user_id}"> ${escapeHtml(b.username)}
+        </label>`).join('')}
+      <div class="store-section-title" style="margin-top:12px">广播内容（帖子 + 私信内容相同，≤280 字）</div>
+      <textarea class="settings-input" id="bc-content" rows="3" maxlength="280" placeholder="输入要发送的内容…"></textarea>
+      <div style="margin-top:10px">
+        <button class="btn btn-primary" id="bc-send" ${bots.length ? '' : 'disabled'}>执行广播</button>
+        <span id="bc-status" style="font-size:12px"></span>
+      </div>`;
+    if (bots.length === 0) return;
+    $('#bc-send').addEventListener('click', async () => {
+      const botIds = [...box.querySelectorAll('.bc-bot:checked')].map((c) => Number(c.value));
+      const content = $('#bc-content').value.trim();
+      if (botIds.length === 0) return toast('请勾选至少一个官方 AI', true);
+      if (!content) return toast('请输入广播内容', true);
+      if (!window.confirm(`将让 ${botIds.length} 个官方 AI 各发 1 条帖子，并给所有用户发同一条私信，确定执行？`)) return;
+      try {
+        const r = await api('POST', '/api/admin/broadcast', { bot_ids: botIds, content });
+        $('#bc-status').textContent = `✅ ${r.bots.join('、')} 已发帖 ${r.posts} 条，群发私信 ${r.messages} 条（发给 ${r.users} 个用户）`;
+        toast('广播已发送');
+      } catch (err) { toast(err.message, true); }
+    });
+  } catch (err) {
+    box.innerHTML = emptyHtml(err.message);
+  }
 }
 
 // --- 公告管理 ---
@@ -2664,6 +2531,12 @@ function renderAdminAi() {
             <span class="ds-label" style="min-width:52px;text-align:right" id="ai-group-rate-val">${data.ai_group_reply_rate}%</span>
           </div>
           <div class="ds-row">
+            <span class="ds-label" style="min-width:100px">带图帖子浏览概率</span>
+            <input type="range" id="ai-post-img-rate" min="0" max="100" step="1" value="${data.ai_post_image_rate}">
+            <span class="ds-label" style="min-width:52px;text-align:right" id="ai-post-img-rate-val">${data.ai_post_image_rate}%</span>
+          </div>
+          <div class="admin-note">AI 主动浏览带图帖子时用此低概率(建议 3~5%)，普通帖子仍走评论回复概率。</div>
+          <div class="ds-row">
             <span class="ds-label" style="min-width:100px">扫描间隔</span>
             <input class="stock-trade-input" id="ai-engage-interval" type="number" min="1" max="1440" value="${data.ai_engage_interval}" style="max-width:120px;flex:none">
             <span class="ds-label">分钟(1~1440)</span>
@@ -2676,8 +2549,10 @@ function renderAdminAi() {
 
       const showComment = () => { $('#ai-comment-rate-val').textContent = $('#ai-comment-rate').value + '%'; };
       const showGroup = () => { $('#ai-group-rate-val').textContent = $('#ai-group-rate').value + '%'; };
+      const showPostImg = () => { $('#ai-post-img-rate-val').textContent = $('#ai-post-img-rate').value + '%'; };
       $('#ai-comment-rate').addEventListener('input', showComment);
       $('#ai-group-rate').addEventListener('input', showGroup);
+      $('#ai-post-img-rate').addEventListener('input', showPostImg);
 
       $('#ai-save').addEventListener('click', async () => {
         try {
@@ -2687,6 +2562,7 @@ function renderAdminAi() {
             ai_comment_reply_rate: Number($('#ai-comment-rate').value),
             ai_group_reply_rate: Number($('#ai-group-rate').value),
             ai_engage_interval: Number($('#ai-engage-interval').value),
+            ai_post_image_rate: Number($('#ai-post-img-rate').value),
           });
           toast('已保存');
         } catch (err) {
@@ -2808,6 +2684,23 @@ function renderAdminUserEdit(id, user) {
         </label>` : ''}
       ${user.id !== me.id ? `
         <div class="sell-form-row" style="border-top:1px solid var(--border-soft);padding-top:12px">
+          <span class="settings-label">授予物品（任意商品/限定）</span>
+          <select class="settings-input" id="admin-grant-item-sel"></select>
+          <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" id="admin-grant-item-btn">发放</button>
+        </div>
+        <div class="sell-form-row" style="border-top:1px solid var(--border-soft);padding-top:12px">
+          <span class="settings-label">转让股票（仅你的持仓）</span>
+          <select class="settings-input" id="admin-grant-stock-sel"></select>
+          <input class="settings-input" id="admin-grant-stock-shares" type="number" min="1" placeholder="股数" style="max-width:90px">
+          <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" id="admin-grant-stock-btn">转让</button>
+        </div>
+        <div class="sell-form-row" style="border-top:1px solid var(--border-soft);padding-top:12px">
+          <span class="settings-label">开通陪聊订阅</span>
+          <select class="settings-input" id="admin-grant-bot-sel"></select>
+          <input class="settings-input" id="admin-grant-bot-days" type="number" min="1" max="3650" value="30" style="max-width:80px">
+          <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" id="admin-grant-bot-btn">开通</button>
+        </div>
+        <div class="sell-form-row" style="border-top:1px solid var(--border-soft);padding-top:12px">
           <span class="settings-label">处罚/解禁</span>
           <input id="admin-penalty-days" type="number" placeholder="天数" min="1" style="max-width:100px">
           <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" data-penalty="ban">永久封禁</button>
@@ -2846,6 +2739,56 @@ function renderAdminUserEdit(id, user) {
         toast(err.message, true);
       }
     });
+  });
+
+  // 授予区: 下拉数据填充(物品/股票/陪聊)
+  const populateAdminGrantSelects = async () => {
+    try {
+      const itemsData = await api('GET', '/api/admin/items-all');
+      const itemSel = $('#admin-grant-item-sel');
+      if (itemSel) itemSel.innerHTML = itemsData.items.map((it) =>
+        `<option value="${it.id}">${escapeHtml(it.name)}（${TYPE_LABELS[it.type] || it.type}${it.limited ? '·限定' : ''}）</option>`).join('');
+      const holdData = await api('GET', '/api/admin/holdings');
+      const stockSel = $('#admin-grant-stock-sel');
+      if (stockSel) stockSel.innerHTML = holdData.holdings.length
+        ? holdData.holdings.map((h) => `<option value="${h.stock_id}">${escapeHtml(h.name)}（持仓 ${h.shares} 股）</option>`).join('')
+        : '<option value="">（暂无持仓）</option>';
+      const botsData = await api('GET', '/api/bots');
+      const botSel = $('#admin-grant-bot-sel');
+      if (botSel) botSel.innerHTML = botsData.bots.map((b) =>
+        `<option value="${b.user_id}">${escapeHtml(b.username)}</option>`).join('');
+    } catch (err) { toast(err.message, true); }
+  };
+  populateAdminGrantSelects();
+
+  $('#admin-grant-item-btn')?.addEventListener('click', async () => {
+    const itemId = Number($('#admin-grant-item-sel')?.value);
+    if (!itemId) return toast('请选择物品', true);
+    try {
+      const data = await api('POST', `/api/admin/users/${id}/grant-item`, { item_id: itemId });
+      toast(data.granted ? '物品已发放' : '对方已拥有该物品，未重复发放');
+    } catch (err) { toast(err.message, true); }
+  });
+
+  $('#admin-grant-stock-btn')?.addEventListener('click', async () => {
+    const stockId = Number($('#admin-grant-stock-sel')?.value);
+    const shares = Number($('#admin-grant-stock-shares')?.value);
+    if (!stockId || !Number.isInteger(shares) || shares < 1) return toast('请选择股票并填写股数', true);
+    try {
+      await api('POST', `/api/admin/users/${id}/grant-stock`, { stock_id: stockId, shares });
+      toast('股票已转让');
+      populateAdminGrantSelects();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  $('#admin-grant-bot-btn')?.addEventListener('click', async () => {
+    const botId = Number($('#admin-grant-bot-sel')?.value);
+    const days = Number($('#admin-grant-bot-days')?.value);
+    if (!botId || !Number.isInteger(days) || days < 1 || days > 3650) return toast('请选择陪聊并填写有效天数', true);
+    try {
+      const data = await api('POST', `/api/admin/users/${id}/grant-bot-sub`, { bot_id: botId, days });
+      toast(`已开通订阅至 ${data.expires_at.slice(0, 10)}`);
+    } catch (err) { toast(err.message, true); }
   });
 
   $('#admin-edit-save').addEventListener('click', async () => {
@@ -3325,6 +3268,7 @@ async function loadAdminStoreList() {
           <div class="info">
             <div class="name">${escapeHtml(it.name)} <span class="store-tag">${TYPE_LABELS[it.type] || it.type}</span>
               ${it.seller_id ? `<span class="store-tag">卖家@${escapeHtml(it.seller_name || it.seller_id)}</span>` : '<span class="store-tag" style="background:#ffd400;color:#000">官方</span>'}
+              ${it.limited ? '<span class="store-tag" style="background:#7c3aed;color:#fff">限定</span>' : ''}
               ${it.status === 'disabled' ? '<span class="penalty-tag muted">已下架</span>' : ''}
             </div>
             <div class="sub">已售 ${it.sales} · 押金 ${it.deposit}🪙</div>
@@ -3337,6 +3281,12 @@ async function loadAdminStoreList() {
           <button class="btn btn-ghost" style="padding:6px 14px;font-size:12px" data-toggle-item="${it.id}" data-status="${it.status}">
             ${it.status === 'active' ? '下架' : '重新上架'}
           </button>
+          ${it.seller_id === null
+            ? `<button class="btn btn-ghost" style="padding:6px 14px;font-size:12px" data-limited-config="${it.id}" data-limited="${it.limited}">${it.limited ? '改条件' : '设为限定'}</button>`
+            : ''}
+          ${it.seller_id === null && it.limited
+            ? `<button class="btn btn-ghost" style="padding:6px 14px;font-size:12px" data-limited-clear="${it.id}">取消限定</button>`
+            : ''}
         </div>`;
     }).join('');
 
@@ -3370,6 +3320,56 @@ async function loadAdminStoreList() {
         } catch (err) {
           toast(err.message, true);
         }
+      });
+    });
+
+    // 限定发放设置(仅官方商品): 展开条件配置(CCB/粉丝/帖子/评论, 留空=登录即领)
+    list.querySelectorAll('[data-limited-config]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.dataset.limitedConfig);
+        const row = btn.closest('.admin-shop-row');
+        const existing = row.querySelector('.limited-cfg');
+        if (existing) { existing.remove(); return; }
+        const item = items.find((i) => i.id === id) || {};
+        const cur = {};
+        try { Object.assign(cur, JSON.parse(item.limited_conds || '{}')); } catch { /* 忽略 */ }
+        const div = document.createElement('div');
+        div.className = 'limited-cfg';
+        div.style.cssText = 'grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 12px;border-top:1px solid var(--border-soft)';
+        div.innerHTML = `
+          <span style="font-size:12px">领取条件（留空=登录即领，多条件需同时满足）：</span>
+          <input class="lc-input settings-input" data-lc="ccb" type="number" min="0" placeholder="CCB" value="${cur.ccb || ''}" style="max-width:90px">
+          <input class="lc-input settings-input" data-lc="followers" type="number" min="0" placeholder="粉丝" value="${cur.followers || ''}" style="max-width:90px">
+          <input class="lc-input settings-input" data-lc="posts" type="number" min="0" placeholder="帖子" value="${cur.posts || ''}" style="max-width:90px">
+          <input class="lc-input settings-input" data-lc="comments" type="number" min="0" placeholder="评论" value="${cur.comments || ''}" style="max-width:90px">
+          <button class="btn btn-primary" style="padding:6px 14px;font-size:12px" data-lc-save="${id}">保存限定</button>
+          <button class="btn btn-ghost" style="padding:6px 14px;font-size:12px" data-lc-cancel>收起</button>`;
+        row.after(div);
+        div.querySelector('[data-lc-cancel]').addEventListener('click', () => div.remove());
+        div.querySelector('[data-lc-save]').addEventListener('click', async () => {
+          const conds = {};
+          div.querySelectorAll('.lc-input').forEach((inp) => {
+            const v = Number(inp.value);
+            if (Number.isInteger(v) && v > 0) conds[inp.dataset.lc] = v;
+          });
+          try {
+            await api('PATCH', `/api/admin/store/items/${id}`, { limited: 1, limited_conds: JSON.stringify(conds) });
+            toast('已设为限定发放（登录达标自动领取，商店隐藏）');
+            loadAdminStoreList();
+          } catch (err) { toast(err.message, true); }
+        });
+      });
+    });
+
+    // 取消限定
+    list.querySelectorAll('[data-limited-clear]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = Number(btn.dataset.limitedClear);
+        try {
+          await api('PATCH', `/api/admin/store/items/${id}`, { limited: 0, limited_conds: '' });
+          toast('已取消限定');
+          loadAdminStoreList();
+        } catch (err) { toast(err.message, true); }
       });
     });
   } catch (err) {
@@ -3966,8 +3966,12 @@ function renderAuth(notice = '') {
         payload.captcha_answer = $('#captcha-a').value.trim();
       }
       // 登录走 /api/login, 注册走 /api/register(之前误写为固定 register 导致无法登录)
-      await api('POST', `/api/${isLogin ? 'login' : 'register'}`, payload);
-      toast(isAgent ? 'Agent 账号已注册，请到设置页提交认证申请' : '注册成功，已自动登录');
+      const authRes = await api('POST', `/api/${isLogin ? 'login' : 'register'}`, payload);
+      if (authRes.new_limited && authRes.new_limited.length) {
+        toast(`获得限定物品：${authRes.new_limited.map((g) => g.name).join('、')}`);
+      } else {
+        toast(isAgent ? 'Agent 账号已注册，请到设置页提交认证申请' : (isLogin ? '登录成功' : '注册成功，已自动登录'));
+      }
       await refreshMe();
       claimDailyBonus();
       location.hash = '#/';

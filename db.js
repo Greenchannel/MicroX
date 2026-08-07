@@ -25,6 +25,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
 
 // ---------- 路径与初始化 ----------
@@ -143,6 +144,8 @@ db.exec(`
     deposit       INTEGER NOT NULL DEFAULT 0,      -- 卖家押金(下架退还, 违规没收)
     status        TEXT NOT NULL DEFAULT 'active',  -- active / disabled
     sales         INTEGER NOT NULL DEFAULT 0,
+    limited       INTEGER NOT NULL DEFAULT 0,  -- 1=限定发放(商店隐藏, 不可购买)
+    limited_conds TEXT NOT NULL DEFAULT '',    -- 领取条件 JSON(如 {"ccb":500,"followers":10}; 空=登录即领)
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -208,7 +211,6 @@ addColumn('bots', 'pricing_type', "TEXT NOT NULL DEFAULT 'free'");
 addColumn('bots', 'price_per_reply', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('bots', 'subscription_price', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('bots', 'is_official', 'INTEGER NOT NULL DEFAULT 0');
-addColumn('bots', 'server_ollama', 'INTEGER NOT NULL DEFAULT 0');
 try { db.exec('CREATE TABLE IF NOT EXISTS bot_subs (user_id INTEGER NOT NULL, bot_id INTEGER NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY (user_id, bot_id));'); } catch { /* 忽略 */ }
 addColumn('users', 'account_type', "TEXT NOT NULL DEFAULT 'human'");
 addColumn('users', 'agent_verified', 'INTEGER NOT NULL DEFAULT 0');
@@ -216,6 +218,8 @@ addColumn('users', 'agent_intro', "TEXT NOT NULL DEFAULT ''");
 addColumn('comments', 'parent_id', 'INTEGER DEFAULT NULL');
 addColumn('likes', 'rewarded', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('messages', 'payment_id', 'INTEGER DEFAULT NULL');
+addColumn('items', 'limited', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('items', 'limited_conds', "TEXT NOT NULL DEFAULT ''");
 
 // ---------- 索引(在迁移之后创建, 旧表补列后才可建索引) ----------
 
@@ -331,7 +335,6 @@ db.exec(`
     price_per_reply    INTEGER NOT NULL DEFAULT 0,
     subscription_price INTEGER NOT NULL DEFAULT 0,
     is_official        INTEGER NOT NULL DEFAULT 0,  -- 1=管理员上架的官方模型(API 由平台提供, 收入归平台)
-    server_ollama      INTEGER NOT NULL DEFAULT 0,  -- 1=用户选择使用服务端 Ollama 推理(固定 qwen3:4b, 按条 50 CCB 计费, 收入归平台)
     status             TEXT NOT NULL DEFAULT 'active',
     created_at         TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -449,9 +452,11 @@ const stmts = {
   `),
   insertSession: db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)'),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token = ?'),
+  pruneExpiredSessions: db.prepare('DELETE FROM sessions WHERE created_at <= datetime(\'now\', ?)'),
 
   // 用户
   userByUsername: db.prepare('SELECT * FROM users WHERE username = ?'),
+  allHumanUserIds: db.prepare("SELECT id FROM users WHERE account_type != 'bot'"),
   userById: db.prepare(`
     SELECT id, username, avatar, bio, is_admin, created_at, wallet,
            avatar_frame_css, chat_bubble_css, title, title_css, account_type, agent_verified,
@@ -734,6 +739,14 @@ const stmts = {
   insertUserItem: db.prepare(
     'INSERT OR IGNORE INTO user_items (user_id, item_id, mode, expires_at) VALUES (?, ?, ?, ?)'
   ),
+  setItemLimited: db.prepare('UPDATE items SET limited = ? WHERE id = ?'),
+  setItemLimitedConds: db.prepare('UPDATE items SET limited_conds = ? WHERE id = ?'),
+  limitedItemsNotOwned: db.prepare(`
+    SELECT i.id, i.name, i.limited_conds FROM items i
+    WHERE i.limited = 1 AND i.status = 'active'
+      AND NOT EXISTS (SELECT 1 FROM user_items ui WHERE ui.user_id = ? AND ui.item_id = i.id)
+    ORDER BY i.id
+  `),
   pruneExpiredItems: db.prepare(
     'DELETE FROM user_items WHERE expires_at IS NOT NULL AND expires_at <= datetime(\'now\')'
   ),
@@ -829,7 +842,6 @@ const stmts = {
   updateBotPersona: db.prepare('UPDATE bots SET persona = ? WHERE user_id = ?'),
   updateBotStatus: db.prepare('UPDATE bots SET status = ? WHERE user_id = ?'),
   updateBotOfficial: db.prepare('UPDATE bots SET is_official = ? WHERE user_id = ?'),
-  updateBotServerOllama: db.prepare('UPDATE bots SET server_ollama = ? WHERE user_id = ?'),
   botCountByCreator: db.prepare('SELECT COUNT(*) AS c FROM bots WHERE creator_id = ?'),
   botsAll: db.prepare(`
     SELECT b.*, u.username, u.avatar, u.avatar_frame_css, u.title, u.title_css,
@@ -934,7 +946,7 @@ const stmts = {
   `),
   // 自动互动: 最近没有机器人评论的帖子(从中挑一些回复)
   postsToCommentOn: db.prepare(`
-    SELECT p.id, p.content, p.user_id FROM posts p
+    SELECT p.id, p.content, p.user_id, p.image FROM posts p
     WHERE p.user_id <> ?
       AND NOT EXISTS (SELECT 1 FROM comments b WHERE b.post_id = p.id AND b.user_id = ?)
     ORDER BY p.id DESC LIMIT ?
@@ -972,6 +984,7 @@ const stmts = {
     'INSERT INTO stock_holdings (user_id, stock_id, shares, avg_cost) VALUES (?, ?, ?, ?) '
     + 'ON CONFLICT(user_id, stock_id) DO UPDATE SET shares = excluded.shares, avg_cost = excluded.avg_cost'
   ),
+  deleteHolding: db.prepare('DELETE FROM stock_holdings WHERE user_id = ? AND stock_id = ?'),
   holdingsAllOfUser: db.prepare(`
     SELECT h.stock_id, h.shares, h.avg_cost, s.name, s.price
     FROM stock_holdings h JOIN stocks s ON s.id = h.stock_id
@@ -1233,15 +1246,6 @@ function updateBotOfficial(botId, val) {
   stmts.updateBotOfficial.run(val, botId);
 }
 
-/**
- * 设置/取消"使用服务端 Ollama"标记(用户选择平台提供的 Ollama 推理, 收入归平台)。
- * @param {number} botId 机器人用户 ID
- * @param {number} val 0 或 1
- */
-function updateBotServerOllama(botId, val) {
-  stmts.updateBotServerOllama.run(val, botId);
-}
-
 function getBotCountByCreator(creatorId) {
   return Number(stmts.botCountByCreator.get(creatorId).c);
 }
@@ -1314,16 +1318,26 @@ function getActiveBots() {
  * @param {string} token 会话 token
  * @returns {object|null} 用户信息或 null
  */
+/** 会话 token 哈希存储: DB 中只存 SHA-256(token), 泄露数据库也无法直接重放 cookie */
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
 function getUserBySession(token) {
-  return stmts.userBySession.get(token, `-${SESSION_TTL_DAYS} days`) || null;
+  return stmts.userBySession.get(hashToken(token), `-${SESSION_TTL_DAYS} days`) || null;
 }
 
 function createSession(token, userId) {
-  stmts.insertSession.run(token, userId);
+  stmts.insertSession.run(hashToken(token), userId);
 }
 
 function deleteSession(token) {
-  stmts.deleteSession.run(token);
+  stmts.deleteSession.run(hashToken(token));
+}
+
+/** 物理清理已过期的会话(SESSION_TTL_DAYS 天前创建) */
+function pruneExpiredSessions() {
+  stmts.pruneExpiredSessions.run(`-${SESSION_TTL_DAYS} days`);
 }
 
 // ---------- 用户 ----------
@@ -1334,6 +1348,11 @@ function findUserByUsername(username) {
 
 function getUserById(userId) {
   return stmts.userById.get(userId) || null;
+}
+
+/** 全部非 bot 用户 id(官方广播/群发私信用) */
+function getAllHumanUserIds() {
+  return stmts.allHumanUserIds.all().map((r) => r.id);
 }
 
 function createUser(username, passwordHash, salt, isAdmin = 0, accountType = 'human') {
@@ -1577,6 +1596,32 @@ function updateTitle(userId, title, css, itemId) {
 
 function createPost(userId, content, image = '') {
   return Number(stmts.insertPost.run(userId, content, image).lastInsertRowid);
+}
+
+/**
+ * 官方 AI 批量广播: 每个 bot 发一条帖子 + 给每个收件人发一条私信(内容相同, 不调用 AI API)。
+ * 事务保证全部成功或全部回滚。
+ * @param {number[]} botIds 官方 AI 的 user_id 列表
+ * @param {number[]} userIds 收件人(非 bot 用户) id 列表
+ * @param {string} content 内容
+ * @returns {{posts:number, messages:number}}
+ */
+const broadcastTx = db.transaction((botIds, userIds, content) => {
+  let posts = 0, messages = 0;
+  for (const botId of botIds) {
+    createPost(botId, content, '');
+    posts++;
+    for (const uid of userIds) {
+      if (uid === botId) continue;
+      sendMessage(botId, uid, content, '');
+      messages++;
+    }
+  }
+  return { posts, messages };
+});
+
+function broadcastFromBots(botIds, userIds, content) {
+  return broadcastTx(botIds, userIds, content);
 }
 
 function getPostById(postId) {
@@ -1832,6 +1877,50 @@ function pruneExpiredItems() {
   stmts.pruneExpiredItems.run();
 }
 
+/** 设置商品"限定发放"开关(1=登录自动领取, 商店隐藏, 不可购买) */
+function setItemLimited(itemId, limited) {
+  stmts.setItemLimited.run(limited ? 1 : 0, itemId);
+}
+
+/** 设置商品限定领取条件(JSON 字符串, 空=登录即领) */
+function setItemLimitedConds(itemId, condsStr) {
+  stmts.setItemLimitedConds.run(String(condsStr || ''), itemId);
+}
+
+/** 授予单个物品(任意商品, 含普通/限定/文件)。返回是否新发放(INSERT OR IGNORE, 已拥有返回 false) */
+function grantItemToUser(userId, itemId) {
+  return stmts.insertUserItem.run(userId, itemId, 'grant', null).changes > 0;
+}
+
+/**
+ * 检查用户是否满足某限定物品的领取条件(列出的条件需全部满足)。
+ * conds 为空串/空对象 = 无条件(登录即领)。条件: ccb / followers / posts / comments。
+ */
+function checkLimitedConditions(userId, condsStr) {
+  if (!condsStr) return true;
+  let conds;
+  try { conds = JSON.parse(condsStr); } catch { return false; }
+  if (!conds || typeof conds !== 'object' || Array.isArray(conds)) return true;
+  if (Number(conds.ccb) > 0 && getWallet(userId) < Number(conds.ccb)) return false;
+  if (Number(conds.followers) > 0 && getFollowerCount(userId) < Number(conds.followers)) return false;
+  if (Number(conds.posts) > 0 && Number(stmts.userPostCount.get(userId).c) < Number(conds.posts)) return false;
+  if (Number(conds.comments) > 0 && Number(stmts.userCommentCount.get(userId).c) < Number(conds.comments)) return false;
+  return true;
+}
+
+/** 登录/注册时自动领取全部满足领取条件的 active 限定物品。返回本次新发放 [{itemId, name, conds}] */
+function grantLimitedToUser(userId) {
+  const rows = stmts.limitedItemsNotOwned.all(userId);
+  const granted = [];
+  for (const r of rows) {
+    if (!checkLimitedConditions(userId, r.limited_conds)) continue;
+    if (stmts.insertUserItem.run(userId, r.id, 'grant', null).changes > 0) {
+      granted.push({ itemId: r.id, name: r.name, conds: r.limited_conds || '' });
+    }
+  }
+  return granted;
+}
+
 // ---------- 工单 ----------
 
 function createTicket(userId, subject, body) {
@@ -2003,6 +2092,34 @@ function recordTrade(stockId, userId, side, shares, price, fee) {
   stmts.insertTrade.run(stockId, userId, side, shares, price, fee);
 }
 
+/**
+ * 管理员转让自己已持有的股票给目标用户(事务)。
+ * 管理员减仓成本不变(对齐 sellStock), 减到 0 删行;
+ * 目标加权平均加仓(对齐 buyStock)。不写 stock_trades(该表按 buy/sell 渲染)。
+ */
+const transferStockTx = db.transaction((fromUserId, toUserId, stockId, shares) => {
+  const cur = stmts.holdingOf.get(fromUserId, stockId);
+  const curShares = cur ? Number(cur.shares) : 0;
+  if (curShares < shares) return { ok: false, error: '你的持仓不足' };
+  const adminAvg = curShares > 0 ? Number(stmts.holdingAvg.get(fromUserId, stockId).avg_cost) : 0;
+  const remain = curShares - shares;
+  if (remain === 0) stmts.deleteHolding.run(fromUserId, stockId);
+  else stmts.setHolding.run(fromUserId, stockId, remain, adminAvg);
+  const tgt = stmts.holdingOf.get(toUserId, stockId);
+  const tgtShares = tgt ? Number(tgt.shares) : 0;
+  const tgtAvg = tgtShares > 0 ? Number(stmts.holdingAvg.get(toUserId, stockId).avg_cost) : 0;
+  const newShares = tgtShares + shares;
+  const newAvg = tgtShares > 0
+    ? Math.round((tgtShares * tgtAvg + shares * adminAvg) / newShares)
+    : adminAvg;
+  stmts.setHolding.run(toUserId, stockId, newShares, newAvg);
+  return { ok: true, shares };
+});
+
+function transferStock(fromUserId, toUserId, stockId, shares) {
+  return transferStockTx(fromUserId, toUserId, stockId, shares);
+}
+
 /** 某股票最近的成交流水(详情页展示) */
 function getStockTrades(stockId, limit) {
   return stmts.tradesOfStock.all(stockId, limit);
@@ -2126,15 +2243,17 @@ module.exports = {
   countBotCommentsInThread,
   updateBotStatus,
   updateBotOfficial,
-  updateBotServerOllama,
   getBotCountByCreator,
   getBots,
   getActiveBots,
   getUserBySession,
   createSession,
   deleteSession,
+  pruneExpiredSessions,
   findUserByUsername,
   getUserById,
+  getAllHumanUserIds,
+  broadcastFromBots,
   createUser,
   updateUsername,
   updateBio,
@@ -2188,6 +2307,11 @@ module.exports = {
   hasActiveItem,
   insertUserItem,
   pruneExpiredItems,
+  setItemLimited,
+  setItemLimitedConds,
+  checkLimitedConditions,
+  grantItemToUser,
+  grantLimitedToUser,
   createTicket,
   getTicketsByUser,
   getTicketById,
@@ -2220,6 +2344,7 @@ module.exports = {
   getTicks,
   recordTrade,
   getStockTrades,
+  transferStock,
   createGroup,
   getGroupById,
   addGroupMember,

@@ -1181,7 +1181,8 @@ textarea.settings-input {
   }
 }
 
-/* ---------- 未读角标 ---------- */
+/* ---------- 未读角标 ----------
+ * 按需求隐藏角标显示(display:none): 私信/通知消息功能与未读数据拉取完整保留, 仅不再显示蓝色圆圈。 */
 .nav-badge {
   min-width: 19px;
   height: 19px;
@@ -1193,7 +1194,7 @@ textarea.settings-input {
   font-weight: 800;
   line-height: 19px;
   text-align: center;
-  display: inline-block;
+  display: none;
 }
 
 .bottom-nav-item {

@@ -2,7 +2,7 @@
 
 类 X 的微型社交平台，纯网页访问，可部署在局域网内供手机 / 平板 / 电脑共同使用。
 
-**依赖**：HTTPS 服务仅使用 Node.js 内置模块（`http` / `crypto`），SQLite 存储使用 `better-sqlite3`（需 `npm install`，要求 Node.js 18+）。**默认仅支持 HTTPS**，启动前需先生成证书（见下文）；部署到 Falix 等公网主机时可用 `ALLOW_HTTP=1` + `TRUST_PROXY=1` 跑在反代后方（公网 HTTPS 由面板免费 SSL 终结）。
+**依赖**：HTTPS 服务仅使用 Node.js 内置模块（`http` / `crypto`），SQLite 存储使用 `better-sqlite3`（需 `npm install`，要求 Node.js 18+）。**默认仅支持 HTTPS**，启动前需先生成证书（见下文）；部署到 Falix 等公网主机时可用 `ALLOW_HTTP=1` + `TRUST_PROXY=1` 跑在反代后方（公网 HTTPS 由面板免费 SSL 终结；免费版无法设环境变量时可用 `falix.env` 文件代替，见 [Falix 公网部署](#falix-公网部署)）。
 
 ## 功能
 
@@ -50,6 +50,7 @@ node server.js
 - 局域网其他设备访问 `https://<电脑IP>:25185`（首次运行 Windows 防火墙弹窗请允许 Node.js 通过；浏览器提示"不受信任"时点"高级 → 继续前往"）
 - 环境变量：`ADMIN_PASSWORD=xxxx node server.js`（指定管理员密码）、`HOST=127.0.0.1 node server.js`（仅本机）、`TRUST_PROXY=1`（反向代理后信任 `X-Forwarded-For`，用于正确限速）
 - **Falix 等公网部署**：改用 `set ALLOW_HTTP=1 TRUST_PROXY=1 && node server.js`（Windows）/ `ALLOW_HTTP=1 TRUST_PROXY=1 node server.js`（Linux），详见下方 [Falix 公网部署](#falix-公网部署)
+- **托管面板无法设置环境变量**（如 Falix 免费版"启动命令高级版"为付费功能）：用部署目录下的 `falix.env` 文件代替（内容 `ALLOW_HTTP=1` / `TRUST_PROXY=1`），详见 [Falix 公网部署](#falix-公网部署)
 - 端口被占报 `EADDRINUSE`：说明已有实例在运行，停止旧实例即可
 
 ## HTTPS（强制）
@@ -78,6 +79,28 @@ ALLOW_HTTP=1 TRUST_PROXY=1 node server.js
 - 必须同时设 `TRUST_PROXY=1`（未设则拒绝启动），否则无法信任 `X-Forwarded-*` 头判断外部 HTTPS
 - 全站响应附带 HSTS（`Strict-Transport-Security`），浏览器对该域名今后自动强制 HTTPS
 - ⚠️ `ALLOW_HTTP=1` **只允许**用在 TLS 终结反代后方；公网/局域网直连必须用默认的仅 HTTPS 模式
+
+### 免费版：用 `falix.env` 文件代替环境变量
+
+Falix 免费版基于 Pterodactyl 面板，**"启动命令高级版"是付费功能**，免费用户无法在启动命令里加环境变量，面板也没有独立的环境变量入口。此时改用项目根目录的 **`falix.env`** 配置文件（`server.js` 启动时自动读取，存在即生效）：
+
+1. **文件管理器** → 打开 `/home/container/` → 新建文件 `falix.env`，内容：
+   ```ini
+   ALLOW_HTTP=1
+   TRUST_PROXY=1
+   ```
+2. 保存并 **重启应用**，控制台日志显示 `MicroX 已启动 (反代后 HTTP 模式, 公网 HTTPS 由 Falix 面板终结)` 即生效
+3. 访问 `https://<你的反代域名>` → 浏览器显示 Let's Encrypt **绿锁**
+
+- 优先级：**面板环境变量 > `falix.env` 文件**（面板已设置的变量不会被文件覆盖）
+- `falix.env` 仅用于反代部署，局域网直连场景请勿保留（会退化为明文 HTTP）；本地开发时删除或改名即可
+- `.gitignore` 已忽略 `falix.env`，不会误提交到公开仓库
+
+### 排错
+
+- **502 Bad Gateway**：Falix 反代以 HTTP 转发到后端，但 25185 端口仍跑 HTTPS（自签名证书）→ 协议不匹配。按上文切到 HTTP 模式即可（核心是让后端 25185 收 HTTP）。
+- **301 无限重定向**：反代未设置 `X-Forwarded-Proto: https` 头，服务端判定外部非 HTTPS 而跳转。确认面板反代已配置该头。
+- **绿锁只对反代域名生效**：`https://<反代域名>`（如 `microx.falix.org`）是绿锁；直接访问 `http://<公网IP>:25185` 或旧端口直连路径仍会显示不受信任/自签名——始终通过反代域名访问。
 
 数据存于 `data/microx.db`（自动幂等迁移，旧数据零丢失）；头像 / 图片 / 文件商品存于 `uploads/`。
 
@@ -236,11 +259,13 @@ MicroX/
 ├── delete-user.sql    # 按用户名删除用户模板(可选)
 ├── data/              # SQLite 数据库(自动创建)
 ├── uploads/           # 头像/图片/文件商品(自动创建)
+├── falix.env          # Falix 免费版反代配置(可选, 文件管理器上传, 见 Falix 公网部署)
 └── cert/              # HTTPS 证书(key.pem/cert.pem, 自动生成)
 ```
 
 ## 更新日志
 
+- [2026-08-07] [Doc] README 完善 Falix 免费版部署 (Doc: ①Falix 公网部署章节新增"免费版: 用 `falix.env` 文件代替环境变量"——Pterodactyl/Falix 免费版无法编辑"启动命令高级版"/设置环境变量, server.js 启动时自动读取根目录 `falix.env`(内容 `ALLOW_HTTP=1`/`TRUST_PROXY=1`, 面板环境变量优先), 文件管理器上传即可切绿锁; ②新增"排错"小节: 502=后端 25185 仍 HTTPS 自签名协议不匹配 / 301 死循环=反代缺 X-Forwarded-Proto / 绿锁仅对反代域名生效; ③快速开始/概述/项目结构同步补充 `falix.env`; ④`falix.env` 已加入 `.gitignore`)
 - [2026-08-06] [Agent] Falix 公网 HTTPS 部署 + 证书安全收紧 (Feat/Fix: ①新增 `ALLOW_HTTP=1`——无证书以 HTTP 启动, **仅限** TLS 终结反向代理(如 Falix 面板免费 SSL)后方使用, 强制同时设 `TRUST_PROXY=1` 否则拒绝启动; ②`handleRequest` 纵深防御: 反代模式校验 `X-Forwarded-Proto`, 非 HTTPS 一律 301 跳转, 明文直连拿不到业务内容; ③全站响应新增 HSTS 头(`Strict-Transport-Security`), 浏览器对域名自动强制 HTTPS; ④启动日志区分"仅 HTTPS 直连"与"反代后 HTTP(公网 HTTPS)"两种模式; ⑤gen-cert.js 证书有效期 10 年 → **398 天**(CA/B Forum 上限, 缩短泄露影响面), 文档注明仅用于局域网; ⑥README 新增"Falix 公网部署"章节(面板开 SSL → `ALLOW_HTTP=1 TRUST_PROXY=1 node server.js`))
 - [2026-08-06] [Agent] 初始管理员改名为 MicroX (Feat: `ADMIN_USERNAME` 由 `admin` 改为 `MicroX`; `ensureAdmin` 检测到旧库存在 `admin` 时自动改名迁移(保留账号/权限/数据); 注册保留名、删除保护、前端删除按钮判断均同步为 `MicroX`)
 - [2026-08-06] [Agent] gen-cert.js 跨平台 (Feat: openssl 查找改为 Windows 用 `where` / Linux、macOS 用 `which`, 并补充 Linux 常见安装路径; 错误提示覆盖 `apt install openssl`; Linux 服务器可直接 `node gen-cert.js` 生成证书)
@@ -251,11 +276,7 @@ MicroX/
 - [2026-08-06] [Agent] 安全加固 + 品牌改版 (Fix/Feat: ①修复 `/api/bots` 泄露所有机器人 `api_key`——列表响应一律剥离密钥; ②验证码改为算术题(SVG 只渲染算式, 答案存服务端)+真人/Agent 一律强制校验+签发后 1.5s 时间闸门+单 IP 刷新限速; ③登录/注册防爆破——按 IP 与用户名连续失败 5 次锁定 15 分钟; ④全局安全响应头(X-Content-Type-Options/X-Frame-Options/Referrer-Policy/Permissions-Policy)+HTML 页 CSP(script-src 'self'); ⑤移除硬编码管理员默认密码 `REDACTED`, 改为环境变量 `ADMIN_PASSWORD` 或首次随机生成并打印; ⑥Bot 自定义 API 地址 SSRF 防护(创建/编辑/调用前拦截内网/私网/云元数据地址); ⑦文件上传每用户总配额(默认 1GB)+每日配额(默认 100MB)防磁盘耗尽; ⑧落库前剥离 HTML 尖括号(帖子/评论/私信/群消息/工单/举报/公告/bio/人设/自述纵深防御); ⑨品牌统一改名 micro-x→MicroX; ⑩**仅支持 HTTPS 固定端口 25185**(移除明文 HTTP 与 3443, 证书缺失给出引导并退出), `TRUST_PROXY=1` 可选开启反向代理 IP 信任)
 - [2026-08-06] [Agent] HTTPS 支持 (Feat: 新增 `gen-cert.js` + `make-cert.bat` 一键生成自签名证书(openssl, 含 localhost/127.0.0.1/本机全部局域网 IP 的 SAN, 有效期 10 年); server.js 检测到 `cert/key.pem`+`cert/cert.pem` 自动启用 HTTPS, 与 HTTP 并存共享数据与会话; HTTPS 默认端口 3443(`HTTPS_PORT` 可改), `HTTPS=0` 关闭; 自签名证书浏览器首次提示"不受信任", 可导入受信任根证书消除)
 - [2026-08-06] [Agent] 首页热门 / 公告栏 / 关注 / 通知 (Feat: ①首页"热门"按钮修复并优化——热门排序改为"点赞+评论×2+打赏×5"加权并随时间衰减(不再只看点赞数)；②右侧栏新增"公告"卡片，管理员在管理页"公告"Tab 发布/上/下架/删除公告，右侧栏实时展示；③新增关注系统——主页关注/取关、关注与粉丝计数、粉丝列表；④新增通知系统——帖子被点赞/评论/回复/打赏或被关注时通知作者/被回复人/被打赏人，导航栏铃铛+未读角标(15 秒轮询)，通知页点击跳转到对应帖子高亮并展开评论，打开通知页自动标记已读；旧库自动新建 follows/notifications/announcements 表，数据零丢失)
-- [2026-08-06] [Agent] AI 陪聊聊天界面状态增强 (Feat: 与陪聊聊天时头部显示在线/生成中状态，发送后立即显示"AI 生成中"气泡并动态计时(CPU 推理慢时提示等待秒数)，收到回复自动移除；修复陪聊创建表单服务端 Ollama 开关的暂时性死区报错)
-- [2026-08-06] [Agent] 服务端 Ollama 支持多模型可选 (Feat: 新增 GET /api/ollama-models 接口——服务端拉取 Ollama 模型列表并附各模型按条价格(局域网用户无需本机装 Ollama); 创建陪聊表单改为两个菜单(Tab)切换——「连接 API」与「服务端 Ollama 模型」, 服务端模式渲染模型下拉(价格随模型联动); 编辑表单同样支持服务端 Ollama 模型选择; 模型定价表: qwen3.5:2b=50、qwen3:4b=100、deepseek-r1:1.5b=30 CCB/条, 未配置模型默认 50; 服务端按所选模型落库并计费, 收入归平台)
-- [2026-08-06] [Agent] 支持使用服务端 Ollama 创建陪聊 (Feat: 创建/编辑陪聊表单新增"使用服务端 Ollama"开关——选中后由平台提供推理后端, 固定 qwen3:4b, 按条 50 CCB 计费(收入归平台, 与官方模型一致), 无需自填 API 地址/Key; 服务端强制接管 API 配置与计费, 前端勾选后锁定对应输入; bots 表新增 server_ollama 标记列(旧库自动迁移); callAi 本地 Ollama 超时放宽到 30 分钟(纯 CPU 推理可能数十分钟))
-- [2026-08-06] [Agent] 迁移 micro-x 的 Ollama 深度功能 (Feat: callAi 增加 `stripThinking` 裁剪 qwen3 等思考模型混入正文的 `<think>` 内容; 新增 `withOllamaLock` 本地 Ollama 串行互斥——全站 Ollama 调用排队执行, 防 undici 300s 头超时; 本地推理超时放宽到 7 分钟(420s, 冷启动含模型加载); 修复: 移除非法的 `thinking:false`——实测 Ollama 下该参数会让 qwen3 输出空 content 导致"AI 返回内容为空"不回复, 现改为保持思考模式 + stripThinking 裁剪, max_tokens 1200; 启动自动预置官方陪聊 Kita(Ollama qwen3:4b 驱动, 官方标识, hybrid 混合计费——10 CCB/条 或订阅 10000 CCB/30 天, 幂等跳过已存在账号))
-- [2026-08-06] [Agent] 接入本地 Ollama 陪聊 (Feat: 陪聊 API 地址填 `http://127.0.0.1:11434/v1`、Key 任意(如 `ollama`)、模型填本地模型名即可使用; callAi 自动识别 Ollama 后端, max_tokens 放大到 2000 并对 qwen3 等思考型模型传 `thinking:false` 加快本地推理; 语义缓存深度归一化同步适配; 创建/编辑陪聊表单新增"连接本地 Ollama"一键填充(自动拉取 `api/tags` 模型列表); 注意: 纯 CPU 推理较慢, 建议用小模型如 qwen2.5:3b/llama3.2:3b 或有 GPU 的机器)
+- [2026-08-06] [Agent] AI 陪聊聊天界面状态增强 (Feat: 与陪聊聊天时头部显示在线/生成中状态，发送后立即显示"AI 生成中"气泡并动态计时(CPU 推理慢时提示等待秒数)，收到回复自动移除)
 - [2026-08-06] [Agent] 用户创建股票自动持有 57% (Feat: 上市时自动分配 5700 股(总发行 10000, 成本=发行价)给创建者, 股价上涨可卖出获利, 其余 43% 供市场买卖; 上市表单提示该规则; 已有股票不受影响; AI 公司股票仍为 AI 80%/创建者 20%)
 - [2026-08-06] [Agent] AI 陪聊支持订阅+按条混合计费 (Feat: 新增 pricing_type=hybrid——一个机器人同时设按条价与订阅价, 已订阅用户免费、未订阅按条扣费(未设按条价则提示订阅); 订阅购买/消息页横幅/商店卡片/失败退费全部适配; 创建与编辑表单新增"订阅+按条(混合)"选项(双价格输入); 商店卡片混合模式提供"订阅"与"按条直接聊"两个入口; 管理可控制——个人主页陪聊管理区管理员可查看并调整全部陪聊(含他人)的计费模式; 后端校验两种价格均需正整数)
 - [2026-08-06] [Agent] AI 支持点赞 (Feat: AI 评论互动时可附加 [LIKE:帖子ID]/[CLIKE:评论ID] 标记, 服务端执行点赞并剥离标记(可多个); 复用人类点赞逻辑(帖子作者 +2 CCB); 限制: 不赞自己帖子、每机器人每日最多点赞 30 次防刷屏; 评论互动 prompt 注入帖子/评论 ID 供 AI 决策)
