@@ -1,59 +1,108 @@
 /**
- * style.css — MicroX UI 重制版
+ * style.css — MicroX UI 重设计版（「晨光」主题）
  *
- * 设计系统: 由 ui-ux-pro-max skill 生成 (见 design-system/MASTER.md)
- *   - 风格: 深色 Slate + Teal 强调, 简洁卡片化, 保留类 X 社交基因
- *   - 字体: Poppins (西文) + PingFang SC / Microsoft YaHei (中文回退)
- *   - 效果: 柔和阴影, 150~300ms 过渡, 焦点环, 触控目标 ≥44px
+ * 设计系统: 见 design-system/micro-x/MASTER.md
+ *   - 风格: 暖白浅色基底 + 靛紫强调, 柔和圆角卡片, 自动跟随系统深浅色
+ *   - 字体: Sora (标题) + Manrope (正文), 中文回退 PingFang SC / Microsoft YaHei
+ *   - 效果: 渐变强调色, 柔和阴影, 150~300ms 过渡, 焦点环, 触控目标 ≥44px
  * 布局: 桌面 3 栏(导航 260px / 主栏 / 右侧 320px), 平板收窄图标栏, 手机顶栏+底栏。
- * 变量名(. --bg/--border/--text 等)与 app.js 内联样式强依赖, 勿改名。
+ * 兼容性: CSS 变量名与 app.js 内联样式强依赖, 勿改名(--bg/--panel/--border/--text/--accent 等)。
  */
 
 /* ---------- 设计令牌 ---------- */
 :root {
-  /* 基础色板: 深蓝灰底, 避免纯黑带来的生硬感 */
-  --bg: #0b0f19;
-  --bg-grad-1: #0d1424;
-  --bg-grad-2: #0b0f19;
-  --panel: #111a2e;
-  --panel-hover: #16213a;
-  --elevated: #182440;
-  --border: #22304d;
-  --border-soft: rgba(148, 163, 184, 0.12);
-  --text: #eef2f8;
-  --text-dim: #8b98b3;
-  --text-mute: #5f6d8a;
+  color-scheme: light;
 
-  /* 强调色: Teal(青) 渐变, 用于主按钮/选中态 */
-  --accent: #22d3ee;
-  --accent-deep: #0ea5b7;
-  --accent-hover: #4ce3f7;
-  --accent-soft: rgba(34, 211, 238, 0.12);
-  --accent-ring: rgba(34, 211, 238, 0.45);
+  /* 基础色板: 暖白浅底, 干净通透 */
+  --bg: #f4f6fb;
+  --bg-grad-1: #edf0f9;
+  --bg-grad-2: #f8f9fd;
+  --panel: #ffffff;
+  --panel-hover: #eef1f8;
+  --elevated: #ffffff;
+  --border: #e2e7f1;
+  --border-soft: rgba(94, 110, 150, 0.16);
+  --text: #1b2233;
+  --text-dim: #5c6680;
+  --text-mute: #98a1b6;
+
+  /* 强调色: 靛紫(Indigo-Violet), 用于主按钮/选中态/品牌 */
+  --accent: #6c5ce7;
+  --accent-deep: #5443d6;
+  --accent-hover: #8373f0;
+  --accent-soft: rgba(108, 92, 231, 0.12);
+  --accent-ring: rgba(108, 92, 231, 0.35);
+  --accent-grad: linear-gradient(135deg, #6c5ce7, #5443d6);
+  --on-accent: #ffffff;
 
   /* 语义色 */
-  --danger: #f43f5e;
-  --danger-hover: #fb7185;
-  --danger-soft: rgba(244, 63, 94, 0.12);
-  --like-pink: #f472b6;
-  --gold: #fbbf24;
-  --green: #34d399;
-  --green-soft: rgba(52, 211, 153, 0.14);
+  --danger: #e5484d;
+  --danger-hover: #ee6166;
+  --danger-soft: rgba(229, 72, 77, 0.1);
+  --like-pink: #ec4899;
+  --gold: #b45309;
+  --gold-bright: #f59e0b;
+  --gold-soft: rgba(217, 119, 6, 0.12);
+  --green: #059669;
+  --green-soft: rgba(5, 150, 105, 0.12);
 
   /* 圆角 / 尺寸 */
-  --radius: 16px;
-  --radius-sm: 10px;
+  --radius: 18px;
+  --radius-sm: 12px;
   --radius-pill: 999px;
   --nav-width: 260px;
   --aside-width: 320px;
   --max-content: 1240px;
 
-  --font: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+  --font: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --font-head: "Sora", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 1px 2px rgba(30, 41, 80, 0.06);
+  --shadow-md: 0 8px 24px rgba(30, 41, 80, 0.1);
+  --shadow-lg: 0 18px 44px rgba(30, 41, 80, 0.16);
+}
+
+/* 跟随系统深色模式: 换一套深蓝灰 + 亮紫的暗色调色板 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --bg: #0b0f1a;
+    --bg-grad-1: #0e1423;
+    --bg-grad-2: #0b0f1a;
+    --panel: #121a2e;
+    --panel-hover: #18223b;
+    --elevated: #1a2540;
+    --border: #24304d;
+    --border-soft: rgba(148, 163, 184, 0.12);
+    --text: #eef2f8;
+    --text-dim: #8b98b3;
+    --text-mute: #5f6d8a;
+
+    --accent: #8b7cf0;
+    --accent-deep: #6c5ce7;
+    --accent-hover: #a296f5;
+    --accent-soft: rgba(139, 124, 240, 0.14);
+    --accent-ring: rgba(139, 124, 240, 0.5);
+    --accent-grad: linear-gradient(135deg, #8b7cf0, #6c5ce7);
+    --on-accent: #ffffff;
+
+    --danger: #f06166;
+    --danger-hover: #fb7185;
+    --danger-soft: rgba(244, 63, 94, 0.12);
+    --like-pink: #f472b6;
+    --gold: #fbbf24;
+    --gold-bright: #fbbf24;
+    --gold-soft: rgba(251, 191, 36, 0.14);
+    --green: #34d399;
+    --green-soft: rgba(52, 211, 153, 0.14);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.45);
+  }
 }
 
 * {
@@ -73,6 +122,11 @@ body {
   line-height: 1.55;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  /* 柔和光晕背景: 左上紫 / 右上绿, 增加层次但不干扰阅读 */
+  background-image:
+    radial-gradient(1100px 540px at 12% -6%, var(--accent-soft), transparent 62%),
+    radial-gradient(900px 480px at 108% 4%, var(--green-soft), transparent 55%);
+  background-attachment: fixed;
 }
 
 a {
@@ -113,7 +167,7 @@ select {
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #33415f;
+  background: var(--text-mute);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -135,6 +189,7 @@ select {
 
 .main {
   min-height: 100vh;
+  background: var(--panel);
   border-left: 1px solid var(--border-soft);
   border-right: 1px solid var(--border-soft);
 }
@@ -146,8 +201,8 @@ select {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 16px 12px;
+  gap: 3px;
+  padding: 18px 14px;
   overflow-y: auto;
 }
 
@@ -156,10 +211,11 @@ select {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  margin-bottom: 12px;
-  border-radius: var(--radius-pill);
-  font-size: 19px;
-  font-weight: 700;
+  margin-bottom: 14px;
+  border-radius: var(--radius);
+  font-family: var(--font-head);
+  font-size: 20px;
+  font-weight: 800;
   transition: background 0.2s;
 }
 
@@ -167,18 +223,28 @@ select {
   background: var(--panel-hover);
 }
 
+.brand-text {
+  /* 品牌名使用渐变文字, 强化视觉记忆点 */
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
 .brand-logo {
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #06222b;
-  font-size: 18px;
+  border-radius: 12px;
+  background: var(--accent-grad);
+  color: var(--on-accent);
+  font-size: 19px;
   font-weight: 800;
   flex-shrink: 0;
+  box-shadow: 0 6px 16px var(--accent-ring);
 }
 
 .nav-item {
@@ -187,7 +253,7 @@ select {
   gap: 14px;
   padding: 12px 14px;
   border-radius: var(--radius-pill);
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 500;
   color: var(--text);
   position: relative;
@@ -202,18 +268,19 @@ select {
 .nav-item.active {
   font-weight: 700;
   color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .nav-item.active::before {
   content: "";
   position: absolute;
-  left: -12px;
+  left: -14px;
   top: 50%;
   transform: translateY(-50%);
   width: 4px;
   height: 26px;
   border-radius: 2px;
-  background: var(--accent);
+  background: var(--accent-grad);
 }
 
 .nav-icon {
@@ -242,7 +309,7 @@ select {
   position: sticky;
   top: 0;
   height: 100vh;
-  padding: 12px 20px 20px;
+  padding: 18px 20px 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -265,18 +332,19 @@ select {
 .search-box input {
   width: 100%;
   background: var(--panel);
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   padding: 12px 16px 12px 44px;
   font-size: 15px;
   outline: none;
   color: var(--text);
+  box-shadow: var(--shadow-sm);
   transition: border-color 0.18s, background 0.18s, box-shadow 0.18s;
 }
 
 .search-box input:focus {
   border-color: var(--accent);
-  background: var(--bg);
+  background: var(--panel);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -289,7 +357,7 @@ select {
 }
 
 .aside-card-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   margin-bottom: 12px;
   display: flex;
@@ -302,7 +370,7 @@ select {
   width: 4px;
   height: 16px;
   border-radius: 2px;
-  background: linear-gradient(var(--accent), var(--accent-deep));
+  background: var(--accent-grad);
 }
 
 .aside-about {
@@ -350,8 +418,8 @@ select {
   font-size: 10px;
   font-weight: 700;
   color: var(--gold);
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.35);
+  background: var(--gold-soft);
+  border: 1px solid currentColor;
   border-radius: 4px;
   padding: 1px 6px;
 }
@@ -385,17 +453,19 @@ select {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 13px 14px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   background: var(--panel);
   margin-bottom: 8px;
-  transition: background 0.18s;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.18s, border-color 0.18s;
   text-decoration: none;
   color: var(--text);
 }
 .notif-item:hover {
   background: var(--panel-hover);
+  border-color: var(--border);
 }
 .notif-item.unread {
   border-color: var(--accent);
@@ -444,6 +514,7 @@ select {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   padding: 14px;
+  box-shadow: var(--shadow-sm);
 }
 
 /* ---------- 手机底部导航 ---------- */
@@ -501,14 +572,15 @@ select {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #06222b;
-  box-shadow: 0 4px 14px rgba(34, 211, 238, 0.25);
+  background: var(--accent-grad);
+  color: var(--on-accent);
+  box-shadow: 0 4px 14px var(--accent-ring);
 }
 
 .btn-primary:hover {
   background: linear-gradient(135deg, var(--accent-hover), var(--accent-deep));
-  box-shadow: 0 6px 20px rgba(34, 211, 238, 0.35);
+  box-shadow: 0 6px 20px var(--accent-ring);
+  transform: translateY(-1px);
 }
 
 .btn-primary:disabled {
@@ -527,24 +599,26 @@ select {
 }
 
 .btn-gold {
-  background: linear-gradient(135deg, var(--gold), #f59e0b);
+  background: linear-gradient(135deg, var(--gold-bright), var(--gold));
   color: #2a1a00;
-  box-shadow: 0 4px 14px rgba(251, 191, 36, 0.22);
+  box-shadow: 0 4px 14px var(--gold-soft);
 }
 
 .btn-gold:hover {
-  filter: brightness(1.08);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
 }
 
 /* 危险操作按钮(管理页删除用户等) */
 .btn-danger {
-  background: linear-gradient(135deg, #ef4444, #dc2626);
+  background: linear-gradient(135deg, var(--danger), #c9363b);
   color: #fff;
-  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.25);
+  box-shadow: 0 4px 14px var(--danger-soft);
 }
 
 .btn-danger:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.08);
+  transform: translateY(-1px);
 }
 
 /* 头像 */
@@ -558,7 +632,7 @@ select {
   font-weight: 700;
   user-select: none;
   overflow: hidden;
-  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.15), var(--shadow-sm);
+  box-shadow: 0 0 0 1px var(--border-soft), var(--shadow-sm);
 }
 
 .avatar img {
@@ -615,6 +689,7 @@ select {
 .feed-tabs {
   display: flex;
   border-bottom: 1px solid var(--border-soft);
+  background: var(--panel);
 }
 
 .feed-tab {
@@ -634,7 +709,7 @@ select {
 }
 
 .feed-tab.active {
-  color: var(--text);
+  color: var(--accent);
   font-weight: 700;
 }
 
@@ -647,7 +722,7 @@ select {
   width: 56px;
   height: 4px;
   border-radius: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-deep));
+  background: var(--accent-grad);
 }
 
 .post {
@@ -660,7 +735,7 @@ select {
 }
 
 .post:hover {
-  background: var(--panel);
+  background: var(--panel-hover);
 }
 
 @keyframes fadeIn {
@@ -746,7 +821,7 @@ select {
 
 .btn-like:hover {
   color: var(--like-pink);
-  background: rgba(244, 114, 182, 0.12);
+  background: var(--like-pink)1f;
 }
 
 .btn-like.liked {
@@ -769,10 +844,11 @@ select {
   padding: 10px 30px;
   border-radius: var(--radius-pill);
   background: var(--panel);
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--border);
   font-size: 14px;
   font-weight: 600;
-  transition: background 0.18s, border-color 0.18s;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
 }
 
 .load-more:hover {
@@ -784,12 +860,13 @@ select {
 /* 页面标题 */
 .page-title {
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 800;
+  font-family: var(--font-head);
   padding: 16px;
   border-bottom: 1px solid var(--border-soft);
   position: sticky;
   top: 0;
-  background: rgba(11, 15, 25, 0.82);
+  background: color-mix(in srgb, var(--panel) 84%, transparent);
   backdrop-filter: blur(10px);
   z-index: 5;
 }
@@ -805,12 +882,13 @@ select {
 .search-page-input input {
   flex: 1;
   background: var(--panel);
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   padding: 11px 18px;
   font-size: 15px;
   outline: none;
   color: var(--text);
+  box-shadow: var(--shadow-sm);
   transition: border-color 0.18s, box-shadow 0.18s;
 }
 
@@ -849,6 +927,7 @@ select {
 .profile-username {
   font-size: 23px;
   font-weight: 800;
+  font-family: var(--font-head);
 }
 
 .profile-joined {
@@ -904,7 +983,6 @@ select {
   width: 100%;
   box-sizing: border-box;
   font-family: inherit;
-  color-scheme: dark;
   transition: border-color 0.18s, box-shadow 0.18s;
 }
 
@@ -938,27 +1016,30 @@ textarea.settings-input {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
+  min-height: 100vh;
   padding: 56px 20px;
 }
 
 .auth-logo {
-  width: 76px;
-  height: 76px;
+  width: 84px;
+  height: 84px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #06222b;
-  font-size: 40px;
+  border-radius: 24px;
+  background: var(--accent-grad);
+  color: var(--on-accent);
+  font-size: 42px;
   font-weight: 800;
   margin-bottom: 20px;
-  box-shadow: 0 12px 32px rgba(34, 211, 238, 0.3);
+  box-shadow: 0 14px 36px var(--accent-ring);
 }
 
 .auth-title {
   font-size: 30px;
   font-weight: 800;
+  font-family: var(--font-head);
   margin-bottom: 30px;
   text-align: center;
 }
@@ -969,6 +1050,11 @@ textarea.settings-input {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  box-shadow: var(--shadow-md);
 }
 
 .auth-form .settings-input {
@@ -989,7 +1075,7 @@ textarea.settings-input {
   bottom: 84px;
   transform: translateX(-50%);
   background: var(--text);
-  color: #0b0f19;
+  color: var(--bg);
   padding: 11px 22px;
   border-radius: var(--radius-pill);
   font-size: 14px;
@@ -1031,7 +1117,7 @@ textarea.settings-input {
   }
 
   .side-nav {
-    padding: 16px 0;
+    padding: 18px 0;
     align-items: center;
   }
 
@@ -1092,7 +1178,7 @@ textarea.settings-input {
     position: sticky;
     top: 0;
     z-index: 10;
-    background: rgba(11, 15, 25, 0.85);
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
     backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--border-soft);
   }
@@ -1105,15 +1191,17 @@ textarea.settings-input {
   }
 
   .brand-mobile .brand-logo {
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     font-size: 15px;
+    border-radius: 10px;
   }
 
   .mobile-header-title {
     flex: 1;
     font-size: 15px;
     font-weight: 700;
+    font-family: var(--font-head);
     text-align: center;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1141,7 +1229,7 @@ textarea.settings-input {
     left: 0;
     right: 0;
     z-index: 20;
-    background: rgba(11, 15, 25, 0.9);
+    background: color-mix(in srgb, var(--bg) 90%, transparent);
     backdrop-filter: blur(10px);
     border-top: 1px solid var(--border-soft);
     padding-bottom: env(safe-area-inset-bottom);
@@ -1183,15 +1271,14 @@ textarea.settings-input {
   }
 }
 
-/* ---------- 未读角标 ----------
- * 按需求隐藏角标显示(display:none): 私信/通知消息功能与未读数据拉取完整保留, 仅不再显示蓝色圆圈。 */
+/* ---------- 未读角标 ---------- */
 .nav-badge {
   min-width: 19px;
   height: 19px;
   padding: 0 5px;
   border-radius: 10px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #06222b;
+  background: var(--accent-grad);
+  color: var(--on-accent);
   font-size: 11px;
   font-weight: 800;
   line-height: 19px;
@@ -1256,17 +1343,17 @@ textarea.settings-input {
   display: block;
   max-width: 100%;
   max-height: 480px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-soft);
   margin: 6px 0;
   cursor: zoom-in;
 }
 
-/* 点击放大预览(全屏遮罩) */
+/* 点击放大预览(全屏遮罩, 始终深色便于看图) */
 .lightbox {
   position: fixed;
   inset: 0;
-  background: rgba(4, 6, 12, 0.92);
+  background: rgba(10, 14, 24, 0.92);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1425,7 +1512,7 @@ textarea.settings-input {
 
 .msg-list-item:hover,
 .msg-list-item.active {
-  background: var(--panel);
+  background: var(--panel-hover);
 }
 
 .msg-list-item.active {
@@ -1452,8 +1539,8 @@ textarea.settings-input {
 }
 
 .msg-list-unread {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #06222b;
+  background: var(--accent-grad);
+  color: var(--on-accent);
   font-size: 11px;
   font-weight: 800;
   min-width: 19px;
@@ -1479,6 +1566,7 @@ textarea.settings-input {
   display: flex;
   align-items: center;
   gap: 10px;
+  background: var(--panel);
 }
 
 .msg-body {
@@ -1489,12 +1577,13 @@ textarea.settings-input {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  background: var(--bg-grad-2);
 }
 
 .msg-bubble {
   max-width: 72%;
   padding: 10px 14px;
-  border-radius: 16px;
+  border-radius: 18px;
   font-size: 14px;
   white-space: pre-wrap;
   overflow-wrap: break-word;
@@ -1504,16 +1593,16 @@ textarea.settings-input {
 
 .msg-mine {
   align-self: flex-end;
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #06222b;
-  border-bottom-right-radius: 4px;
+  background: var(--accent-grad);
+  color: var(--on-accent);
+  border-bottom-right-radius: 6px;
 }
 
 .msg-theirs {
   align-self: flex-start;
   background: var(--panel);
   border: 1px solid var(--border-soft);
-  border-bottom-left-radius: 4px;
+  border-bottom-left-radius: 6px;
 }
 
 .msg-bubble img {
@@ -1538,13 +1627,14 @@ textarea.settings-input {
   padding: 12px 14px;
   border-top: 1px solid var(--border-soft);
   align-items: flex-end;
+  background: var(--panel);
 }
 
 .msg-composer textarea {
   flex: 1;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 18px;
   padding: 10px 14px;
   font-size: 14px;
   resize: none;
@@ -1594,7 +1684,7 @@ textarea.settings-input {
 }
 
 .admin-tab.active {
-  color: var(--text);
+  color: var(--accent);
   font-weight: 700;
   border-bottom: 3px solid var(--accent);
 }
@@ -1619,6 +1709,7 @@ textarea.settings-input {
 
 .admin-search-row input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .admin-user-row {
@@ -1632,7 +1723,7 @@ textarea.settings-input {
 }
 
 .admin-user-row:hover {
-  background: var(--panel);
+  background: var(--panel-hover);
 }
 
 .admin-user-row .info {
@@ -1650,8 +1741,8 @@ textarea.settings-input {
 
 .admin-tag {
   font-size: 10px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #06222b;
+  background: var(--accent-grad);
+  color: var(--on-accent);
   border-radius: 4px;
   padding: 1px 6px;
   font-weight: 700;
@@ -1671,16 +1762,16 @@ textarea.settings-input {
   flex-direction: column;
   gap: 12px;
   background: var(--panel);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-md);
 }
 
-/* 全局输入控件基线: 统一暗色主题下的字体/配色, 避免原生控件白底突兀 */
+/* 全局输入控件基线: 统一字体/配色, 避免原生控件风格突兀 */
 input,
 textarea,
 select {
   font-family: inherit;
   color: var(--text);
-  color-scheme: dark;
+  color-scheme: inherit;
 }
 
 .admin-conv-row {
@@ -1694,7 +1785,7 @@ select {
 }
 
 .admin-conv-row:hover {
-  background: var(--panel);
+  background: var(--panel-hover);
 }
 
 /* ---------- 平板适配: 私信页 ---------- */
@@ -1784,7 +1875,7 @@ select {
 /* 禁言横幅 */
 .muted-banner {
   background: var(--danger-soft);
-  color: #fda4af;
+  color: var(--danger);
   padding: 10px 16px;
   font-size: 14px;
   border-bottom: 1px solid var(--border-soft);
@@ -1804,7 +1895,7 @@ select {
 
 .btn-tip:hover {
   color: var(--gold);
-  background: rgba(251, 191, 36, 0.12);
+  background: var(--gold-soft);
 }
 
 .btn-tip.tipped {
@@ -1839,7 +1930,7 @@ select {
 
 .tip-menu button:hover {
   background: var(--accent);
-  color: #06222b;
+  color: var(--on-accent);
 }
 
 /* 举报按钮 */
@@ -1865,7 +1956,8 @@ select {
 .modal-mask {
   position: fixed;
   inset: 0;
-  background: rgba(4, 6, 12, 0.72);
+  background: rgba(20, 24, 40, 0.55);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1876,8 +1968,8 @@ select {
 
 .modal {
   background: var(--elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  border-radius: 20px;
   padding: 22px;
   width: 100%;
   max-width: 380px;
@@ -1890,12 +1982,13 @@ select {
 .modal-title {
   font-size: 17px;
   font-weight: 700;
+  font-family: var(--font-head);
 }
 
 .modal textarea,
 .modal input[type="number"],
 .modal input[type="text"] {
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 10px 14px;
@@ -1940,7 +2033,7 @@ select {
 
 .btn-comment-like:hover {
   color: var(--like-pink);
-  background: rgba(244, 114, 182, 0.12);
+  background: var(--like-pink)1f;
 }
 
 .btn-comment-like.liked {
@@ -2026,13 +2119,13 @@ select {
   padding: 10px;
   border: 1px solid var(--border-soft);
   border-radius: 12px;
-  background: rgba(10, 14, 26, 0.5);
+  background: var(--panel);
 }
 
 .stock-trade-input {
   width: 100%;
   box-sizing: border-box;
-  background: var(--bg);
+  background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -2040,7 +2133,6 @@ select {
   font-size: 14px;
   outline: none;
   appearance: textfield;
-  color-scheme: dark;
   transition: border-color 0.18s, box-shadow 0.18s;
 }
 
@@ -2081,7 +2173,7 @@ select {
 }
 
 .store-tab.active {
-  color: var(--text);
+  color: var(--accent);
   font-weight: 700;
   border-bottom: 3px solid var(--accent);
 }
@@ -2106,14 +2198,14 @@ select {
 }
 
 .store-card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(34, 211, 238, 0.35);
+  transform: translateY(-3px);
+  border-color: var(--accent);
   box-shadow: var(--shadow-md);
 }
 
 .store-preview {
   height: 110px;
-  background: linear-gradient(135deg, #131c33, #0e1526);
+  background: linear-gradient(135deg, var(--bg-grad-1), var(--bg-grad-2));
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
@@ -2134,6 +2226,7 @@ select {
   padding: 10px 14px;
   font-size: 13px;
   max-width: 70%;
+  box-shadow: var(--shadow-sm);
 }
 
 .store-name {
@@ -2202,7 +2295,6 @@ select {
   flex: 1;
   min-width: 120px;
   transition: border-color 0.18s, box-shadow 0.18s;
-  color-scheme: dark;
 }
 
 .sell-form input:focus,
@@ -2235,7 +2327,7 @@ select {
 }
 
 .inventory-item:hover {
-  background: var(--panel);
+  background: var(--panel-hover);
 }
 
 .inventory-item .info {
@@ -2299,7 +2391,7 @@ select {
 }
 
 .ticket-card:hover {
-  background: var(--panel);
+  background: var(--panel-hover);
 }
 
 .ticket-head {
@@ -2388,7 +2480,7 @@ select {
 }
 
 .admin-report-actions input {
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 6px 10px;
@@ -2396,7 +2488,6 @@ select {
   color: var(--text);
   width: 90px;
   outline: none;
-  color-scheme: dark;
 }
 
 .admin-report-actions .btn {
@@ -2410,7 +2501,7 @@ select {
 }
 
 .badge-pending {
-  background: var(--gold);
+  background: var(--gold-bright);
   color: #2a1a00;
   border-radius: 6px;
   padding: 1px 8px;
@@ -2436,11 +2527,11 @@ select {
 
 .penalty-tag.banned {
   background: var(--danger-soft);
-  color: #fda4af;
+  color: var(--danger);
 }
 
 .penalty-tag.muted {
-  background: rgba(251, 191, 36, 0.14);
+  background: var(--gold-soft);
   color: var(--gold);
 }
 
@@ -2459,6 +2550,7 @@ select {
   border-radius: var(--radius-sm);
   padding: 8px;
   text-align: center;
+  box-shadow: var(--shadow-sm);
 }
 
 .store-stat b {
@@ -2492,7 +2584,6 @@ select {
   font-size: 13px;
   color: var(--text);
   outline: none;
-  color-scheme: dark;
 }
 
 .designer-body {
@@ -2503,7 +2594,7 @@ select {
 }
 
 .designer-preview {
-  background: linear-gradient(135deg, #131c33, #0e1526);
+  background: linear-gradient(135deg, var(--bg-grad-1), var(--bg-grad-2));
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   min-height: 200px;
@@ -2570,7 +2661,6 @@ select {
   outline: none;
   flex: 1;
   min-width: 90px;
-  color-scheme: dark;
 }
 
 .ds-presets {
@@ -2593,7 +2683,7 @@ select {
 }
 
 .designer-controls textarea {
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
@@ -2622,7 +2712,7 @@ select {
 }
 
 .quick-edit input {
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 8px;
@@ -2630,7 +2720,6 @@ select {
   color: var(--text);
   width: 80px;
   outline: none;
-  color-scheme: dark;
 }
 
 .quick-edit input:focus {
@@ -2640,14 +2729,13 @@ select {
 /* 我的陪聊配置区 */
 #my-bots [data-bot-apibox] input,
 #my-bots select[data-bot-ptype] {
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
   font-size: 13px;
   color: var(--text);
   outline: none;
-  color-scheme: dark;
   transition: border-color 0.18s, box-shadow 0.18s;
 }
 
@@ -2706,7 +2794,7 @@ select {
 }
 
 .ds-tab.active {
-  color: var(--text);
+  color: var(--accent);
   font-weight: 700;
 }
 
@@ -2719,7 +2807,7 @@ select {
   width: 48px;
   height: 3px;
   border-radius: 2px;
-  background: var(--accent);
+  background: var(--accent-grad);
 }
 
 /* ---------- Agent 标识与注册 ---------- */
@@ -2751,7 +2839,7 @@ select {
 .agent-badge.bot.official {
   color: var(--gold);
   border-color: var(--gold);
-  background: rgba(251, 191, 36, 0.08);
+  background: var(--gold-soft);
 }
 
 .auth-type {
@@ -2774,7 +2862,7 @@ select {
 }
 
 .agent-code {
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
@@ -2872,7 +2960,7 @@ select {
 
 /* ---------- 付费陪聊横幅 ---------- */
 .bot-pricing-banner {
-  background: rgba(251, 191, 36, 0.1);
+  background: var(--gold-soft);
   color: var(--gold);
   font-size: 12px;
   padding: 7px 16px;
@@ -2913,7 +3001,7 @@ select {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--text-dim);
+  background: var(--accent);
   animation: botTypingBounce 1.2s infinite ease-in-out;
 }
 .bot-typing-dots span:nth-child(2) { animation-delay: 0.15s; }

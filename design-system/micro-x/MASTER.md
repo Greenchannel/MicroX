@@ -7,7 +7,7 @@
 ---
 
 **Project:** MicroX
-**Generated:** 2026-08-06 08:31:04
+**Generated:** 2026-08-08
 **Category:** Social Media App
 **Design Dials:** Density 5/10 (Standard)
 
@@ -15,33 +15,34 @@
 
 ## Global Rules
 
-### Color Palette
+### Color Palette（「晨光」浅色主题）
 
-| Role | Hex | CSS Variable |
-|------|-----|--------------|
-| Primary | `#475569` | `--color-primary` |
-| On Primary | `#FFFFFF` | `--color-on-primary` |
-| Secondary | `#334155` | `--color-secondary` |
-| Accent/CTA | `#0891B2` | `--color-accent` |
-| Background | `#0F172A` | `--color-background` |
-| Foreground | `#FFFFFF` | `--color-foreground` |
-| Muted | `#131B2F` | `--color-muted` |
-| Border | `rgba(255,255,255,0.08)` | `--color-border` |
-| Destructive | `#DC2626` | `--color-destructive` |
-| Ring | `#475569` | `--color-ring` |
+| Role | Hex (Light) | Hex (Dark) | CSS Variable |
+|---|---|---|---|
+| Primary | `#6C5CE7` | `#8B7CF0` | `--color-primary` |
+| On Primary | `#FFFFFF` | `#FFFFFF` | `--color-on-primary` |
+| Secondary | `#5443D6` | `#6C5CE7` | `--color-secondary` |
+| Accent/CTA | `#6C5CE7` | `#8B7CF0` | `--color-accent` |
+| Background | `#F4F6FB` | `#0B0F1A` | `--color-background` |
+| Foreground | `#1B2233` | `#EEF2F8` | `--color-foreground` |
+| Panel / Card | `#FFFFFF` | `#121A2E` | `--color-panel` |
+| Border | `#E2E7F1` | `#24304D` | `--color-border` |
+| Destructive | `#E5484D` | `#F06166` | `--color-destructive` |
+| Ring | `rgba(108,92,231,.35)` | `rgba(139,124,240,.5)` | `--color-ring` |
 
-**Color Notes:** Protective grey + subtle teal on dark
+**Color Notes:** 暖白浅底 + 靛紫强调，暗色模式自动跟随系统（`prefers-color-scheme`）。
 
 ### Typography
 
-- **Heading Font:** Righteous
-- **Body Font:** Poppins
-- **Mood:** music, entertainment, fun, energetic, bold, performance
-- **Google Fonts:** [Righteous + Poppins](https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Righteous&display=swap)
+- **Heading Font:** Sora（标题/品牌/页面大标题）
+- **Body Font:** Manrope（正文/按钮/输入）
+- **中文回退:** PingFang SC / Microsoft YaHei / Noto Sans CJK SC
+- **Mood:** 清爽、社区、现代、活力、可信
+- **Google Fonts:** [Sora + Manrope](https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap)
 
 **CSS Import:**
 ```css
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Righteous&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
 ```
 
 ### Spacing Variables
@@ -60,12 +61,11 @@
 
 ### Shadow Depths
 
-| Level | Value | Usage |
+| Level | Value (Light) | Usage |
 |-------|-------|-------|
-| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.05)` | Subtle lift |
-| `--shadow-md` | `0 4px 6px rgba(0,0,0,0.1)` | Cards, buttons |
-| `--shadow-lg` | `0 10px 15px rgba(0,0,0,0.1)` | Modals, dropdowns |
-| `--shadow-xl` | `0 20px 25px rgba(0,0,0,0.15)` | Hero images, featured cards |
+| `--shadow-sm` | `0 1px 2px rgba(30,41,80,.06)` | Subtle lift |
+| `--shadow-md` | `0 8px 24px rgba(30,41,80,.1)` | Cards, buttons |
+| `--shadow-lg` | `0 18px 44px rgba(30,41,80,.16)` | Modals, dropdowns |
 
 ---
 
@@ -74,32 +74,36 @@
 ### Buttons
 
 ```css
-/* Primary Button */
+/* Primary Button: 靛紫渐变 + 柔光阴影 */
 .btn-primary {
-  background: #0891B2;
-  color: white;
-  padding: 12px 24px;
-  border-radius: 8px;
+  background: linear-gradient(135deg, #6C5CE7, #5443D6);
+  color: #fff;
+  padding: 10px 22px;
+  border-radius: 999px;
   font-weight: 600;
+  box-shadow: 0 4px 14px rgba(108,92,231,.35);
   transition: all 200ms ease;
   cursor: pointer;
 }
 
 .btn-primary:hover {
-  opacity: 0.9;
   transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(108,92,231,.35);
 }
 
-/* Secondary Button */
-.btn-secondary {
+/* Secondary/Ghost Button */
+.btn-ghost {
   background: transparent;
-  color: #475569;
-  border: 2px solid #475569;
-  padding: 12px 24px;
-  border-radius: 8px;
+  color: #6C5CE7;
+  padding: 10px 22px;
+  border-radius: 999px;
   font-weight: 600;
   transition: all 200ms ease;
   cursor: pointer;
+}
+
+.btn-ghost:hover {
+  background: rgba(108,92,231,.12);
 }
 ```
 
@@ -107,16 +111,16 @@
 
 ```css
 .card {
-  background: #0F172A;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: var(--shadow-md);
+  background: #FFFFFF;
+  border: 1px solid rgba(94,110,150,.16);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
   transition: all 200ms ease;
-  cursor: pointer;
 }
 
 .card:hover {
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
   transform: translateY(-2px);
 }
 ```
@@ -125,17 +129,19 @@
 
 ```css
 .input {
-  padding: 12px 16px;
-  border: 1px solid #E2E8F0;
-  border-radius: 8px;
-  font-size: 16px;
-  transition: border-color 200ms ease;
+  padding: 11px 13px;
+  background: #FFFFFF;
+  border: 1px solid #E2E7F1;
+  border-radius: 12px;
+  font-size: 14px;
+  color: #1B2233;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
 }
 
 .input:focus {
-  border-color: #475569;
+  border-color: #6C5CE7;
   outline: none;
-  box-shadow: 0 0 0 3px #47556920;
+  box-shadow: 0 0 0 3px rgba(108,92,231,.12);
 }
 ```
 
@@ -143,17 +149,17 @@
 
 ```css
 .modal-overlay {
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(20,24,40,.55);
   backdrop-filter: blur(4px);
 }
 
 .modal {
-  background: white;
-  border-radius: 16px;
-  padding: 32px;
-  box-shadow: var(--shadow-xl);
-  max-width: 500px;
-  width: 90%;
+  background: #FFFFFF;
+  border-radius: 20px;
+  padding: 22px;
+  box-shadow: var(--shadow-lg);
+  max-width: 380px;
+  width: 100%;
 }
 ```
 
@@ -161,13 +167,11 @@
 
 ## Style Guidelines
 
-**Style:** Vibrant & Block-based
+**Style:** 晨光 · 清爽圆润
 
-**Keywords:** Bold, energetic, playful, block layout, geometric shapes, high color contrast, duotone, modern, energetic
+**Keywords:** 暖白、靛紫、柔和圆角、渐变强调、光晕背景、干净、现代、社区感
 
-**Best For:** Startups, creative agencies, gaming, social media, youth-focused, entertainment, consumer
-
-**Key Effects:** Large sections (48px+ gaps), animated patterns, bold hover (color shift), scroll-snap, large type (32px+), 200-300ms
+**Key Effects:** 渐变品牌标识、卡片悬浮上浮、圆角 12~20px、150~300ms 过渡、柔和光晕背景
 
 ### Page Pattern
 
@@ -181,17 +185,17 @@
 
 ## Anti-Patterns (Do NOT Use)
 
-- ❌ Heavy skeuomorphism
-- ❌ Accessibility ignored
+- ✗ Heavy skeuomorphism
+- ✗ Accessibility ignored
 
 ### Additional Forbidden Patterns
 
-- ❌ **Emojis as icons** — Use SVG icons (Heroicons, Lucide, Simple Icons)
-- ❌ **Missing cursor:pointer** — All clickable elements must have cursor:pointer
-- ❌ **Layout-shifting hovers** — Avoid scale transforms that shift layout
-- ❌ **Low contrast text** — Maintain 4.5:1 minimum contrast ratio
-- ❌ **Instant state changes** — Always use transitions (150-300ms)
-- ❌ **Invisible focus states** — Focus states must be visible for a11y
+- ✗ **Emojis as icons** — Use SVG icons (Heroicons, Lucide, Simple Icons)
+- ✗ **Missing cursor:pointer** — All clickable elements must have cursor:pointer
+- ✗ **Layout-shifting hovers** — Avoid scale transforms that shift layout
+- ✗ **Low contrast text** — Maintain 4.5:1 minimum contrast ratio
+- ✗ **Instant state changes** — Always use transitions (150-300ms)
+- ✗ **Invisible focus states** — Focus states must be visible for a11y
 
 ---
 
@@ -203,7 +207,7 @@ Before delivering any UI code, verify:
 - [ ] All icons from consistent icon set (Heroicons/Lucide)
 - [ ] `cursor-pointer` on all clickable elements
 - [ ] Hover states with smooth transitions (150-300ms)
-- [ ] Light mode: text contrast 4.5:1 minimum
+- [ ] Text contrast 4.5:1 minimum (light & dark mode)
 - [ ] Focus states visible for keyboard navigation
 - [ ] `prefers-reduced-motion` respected
 - [ ] Responsive: 375px, 768px, 1024px, 1440px
