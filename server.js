@@ -616,6 +616,14 @@ const MIME_TYPES = {
 async function serveStatic(req, res, urlPath) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;
 
+  // 安全: 付费文件商品(file_*)禁止走静态路径直接获取(否则绕过购买鉴权)。
+  // 下载一律经 /api/store/item/:id/download(handleStoreDownload 校验购买状态);
+  // 返回 404 而非 403, 避免借此探测有效 file_id(防枚举)。
+  if (urlPath.startsWith('/uploads/file_')) {
+    sendJson(res, 404, { ok: false, error: '文件不存在' });
+    return true;
+  }
+
   let baseDir = PUBLIC_DIR;
   if (urlPath.startsWith('/uploads/')) {
     baseDir = UPLOAD_DIR;
