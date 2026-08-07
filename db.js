@@ -203,6 +203,7 @@ addColumn('users', 'title_css', 'TEXT NOT NULL DEFAULT \'\'');
 addColumn('users', 'title_item_id', 'INTEGER DEFAULT NULL');
 addColumn('users', 'ban_until', 'TEXT NOT NULL DEFAULT \'\'');
 addColumn('users', 'mute_until', 'TEXT NOT NULL DEFAULT \'\'');
+addColumn('users', 'email', "TEXT NOT NULL DEFAULT ''");
 // bots 表可能不存在于旧库, addColumn 会抛错被静默, 无碍
 addColumn('bots', 'api_base_url', "TEXT NOT NULL DEFAULT ''");
 addColumn('bots', 'api_key', "TEXT NOT NULL DEFAULT ''");
@@ -237,6 +238,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
   CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+  -- 邮箱唯一(空串不参与, 兼容存量无邮箱用户)
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email <> '';
 `);
 
 // ---------- AI 陪聊配置与机器人 ----------
@@ -430,15 +433,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(active, created_at);
 `);
 
-// 旧库迁移: 持仓成本价列(盈亏计算用)。ALTER 抛错说明列已存在, 静默忽略。
-try {
-  db.exec('ALTER TABLE stock_holdings ADD COLUMN avg_cost INTEGER NOT NULL DEFAULT 0');
-} catch { /* 列已存在 */ }
-// 存量持仓成本回填为当前价(视为发行时买入, 初始盈亏为 0); 表不存在时忽略
-try {
-  db.exec('UPDATE stock_holdings SET avg_cost = (SELECT price FROM stocks WHERE stocks.id = stock_holdings.stock_id) WHERE avg_cost = 0');
-} catch { /* 表不存在 */ }
-
 // ---------- 预编译语句 ----------
 
 const stmts = {
@@ -458,6 +452,7 @@ const stmts = {
 
   // 用户
   userByUsername: db.prepare('SELECT * FROM users WHERE username = ?'),
+  userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
   allHumanUserIds: db.prepare("SELECT id FROM users WHERE account_type != 'bot'"),
   userById: db.prepare(`
     SELECT id, username, avatar, bio, is_admin, created_at, wallet,
@@ -466,7 +461,7 @@ const stmts = {
     FROM users WHERE id = ?
   `),
   insertUser: db.prepare(
-    'INSERT INTO users (username, password_hash, salt, is_admin, account_type) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO users (username, password_hash, salt, is_admin, account_type, email) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   updateUsername: db.prepare('UPDATE users SET username = ? WHERE id = ?'),
   updateBio: db.prepare('UPDATE users SET bio = ? WHERE id = ?'),
@@ -973,9 +968,6 @@ const stmts = {
   stocksActive: db.prepare('SELECT * FROM stocks WHERE enabled = 1 ORDER BY id'),
   stockById: db.prepare('SELECT * FROM stocks WHERE id = ?'),
   stockByName: db.prepare('SELECT * FROM stocks WHERE name = ?'),
-  stockCountAll: db.prepare('SELECT COUNT(*) AS c FROM stocks'),
-  aiStockOfBot: db.prepare('SELECT * FROM stocks WHERE created_by = ? AND is_ai = 1 LIMIT 1'),
-  stocksByCreator: db.prepare('SELECT COUNT(*) AS c FROM stocks WHERE created_by = ? AND is_ai = 0'),
   insertStock: db.prepare(
     'INSERT INTO stocks (name, price, prev_close, volatility, created_by, is_ai) VALUES (?, ?, ?, ?, ?, ?)'
   ),
@@ -990,7 +982,6 @@ const stmts = {
     'INSERT INTO stock_holdings (user_id, stock_id, shares, avg_cost) VALUES (?, ?, ?, ?) '
     + 'ON CONFLICT(user_id, stock_id) DO UPDATE SET shares = excluded.shares, avg_cost = excluded.avg_cost'
   ),
-  deleteHolding: db.prepare('DELETE FROM stock_holdings WHERE user_id = ? AND stock_id = ?'),
   holdingsAllOfUser: db.prepare(`
     SELECT h.stock_id, h.shares, h.avg_cost, s.name, s.price
     FROM stock_holdings h JOIN stocks s ON s.id = h.stock_id
@@ -1352,6 +1343,10 @@ function findUserByUsername(username) {
   return stmts.userByUsername.get(username) || null;
 }
 
+function findUserByEmail(email) {
+  return stmts.userByEmail.get(email) || null;
+}
+
 function getUserById(userId) {
   return stmts.userById.get(userId) || null;
 }
@@ -1361,8 +1356,8 @@ function getAllHumanUserIds() {
   return stmts.allHumanUserIds.all().map((r) => r.id);
 }
 
-function createUser(username, passwordHash, salt, isAdmin = 0, accountType = 'human') {
-  return Number(stmts.insertUser.run(username, passwordHash, salt, isAdmin, accountType).lastInsertRowid);
+function createUser(username, passwordHash, salt, isAdmin = 0, accountType = 'human', email = '') {
+  return Number(stmts.insertUser.run(username, passwordHash, salt, isAdmin, accountType, email).lastInsertRowid);
 }
 
 function updateUsername(userId, username) {
@@ -2054,23 +2049,13 @@ function getStockByName(name) {
   return stmts.stockByName.get(name) || null;
 }
 
-/** 数据库中是否已有任何股票(用于首次启动预置官方股票) */
-function hasAnyStock() {
-  return Number(stmts.stockCountAll.get().c) > 0;
-}
-
-/** 某 AI 机器人的公司股票(没有返回 null) */
-function getAiStockOfBot(botUserId) {
-  return stmts.aiStockOfBot.get(botUserId) || null;
-}
-
-/** 某用户创建的非 AI 股票数量(用户上市上限用) */
-function countStocksByCreator(creatorId) {
-  return Number(stmts.stocksByCreator.get(creatorId).c);
+/** 在同步事务中执行 fn(better-sqlite3 事务, 返回 fn 的返回值; 用于买卖等多步写原子化) */
+function runInTransaction(fn) {
+  return db.transaction(fn)();
 }
 
 /**
- * 创建股票(官方/用户上市/AI 公司共用)。
+ * 创建股票(官方发行, 归属 MicroX)。
  * @param {object} fields { name, price, volatility, createdBy, isAi }
  * @returns {number} 股票 ID
  */
@@ -2145,34 +2130,6 @@ function getTicks(stockId, limit) {
 /** 记录一笔成交(买卖共用) */
 function recordTrade(stockId, userId, side, shares, price, fee) {
   stmts.insertTrade.run(stockId, userId, side, shares, price, fee);
-}
-
-/**
- * 管理员转让自己已持有的股票给目标用户(事务)。
- * 管理员减仓成本不变(对齐 sellStock), 减到 0 删行;
- * 目标加权平均加仓(对齐 buyStock)。不写 stock_trades(该表按 buy/sell 渲染)。
- */
-const transferStockTx = db.transaction((fromUserId, toUserId, stockId, shares) => {
-  const cur = stmts.holdingOf.get(fromUserId, stockId);
-  const curShares = cur ? Number(cur.shares) : 0;
-  if (curShares < shares) return { ok: false, error: '你的持仓不足' };
-  const adminAvg = curShares > 0 ? Number(stmts.holdingAvg.get(fromUserId, stockId).avg_cost) : 0;
-  const remain = curShares - shares;
-  if (remain === 0) stmts.deleteHolding.run(fromUserId, stockId);
-  else stmts.setHolding.run(fromUserId, stockId, remain, adminAvg);
-  const tgt = stmts.holdingOf.get(toUserId, stockId);
-  const tgtShares = tgt ? Number(tgt.shares) : 0;
-  const tgtAvg = tgtShares > 0 ? Number(stmts.holdingAvg.get(toUserId, stockId).avg_cost) : 0;
-  const newShares = tgtShares + shares;
-  const newAvg = tgtShares > 0
-    ? Math.round((tgtShares * tgtAvg + shares * adminAvg) / newShares)
-    : adminAvg;
-  stmts.setHolding.run(toUserId, stockId, newShares, newAvg);
-  return { ok: true, shares };
-});
-
-function transferStock(fromUserId, toUserId, stockId, shares) {
-  return transferStockTx(fromUserId, toUserId, stockId, shares);
 }
 
 /** 某股票最近的成交流水(详情页展示) */
@@ -2306,6 +2263,7 @@ module.exports = {
   deleteSession,
   pruneExpiredSessions,
   findUserByUsername,
+  findUserByEmail,
   getUserById,
   getAllHumanUserIds,
   broadcastFromBots,
@@ -2384,9 +2342,7 @@ module.exports = {
   getActiveStocks,
   getStockById,
   getStockByName,
-  hasAnyStock,
-  getAiStockOfBot,
-  countStocksByCreator,
+  runInTransaction,
   createStock,
   updateStockPrice,
   setStockPrevClose,
@@ -2401,7 +2357,6 @@ module.exports = {
   getTicks,
   recordTrade,
   getStockTrades,
-  transferStock,
   createGroup,
   getGroupById,
   addGroupMember,

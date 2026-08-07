@@ -1384,11 +1384,9 @@ function renderStorePage() {
       <div class="store-section-title">购买订阅后即可在私信与 AI 互动</div>` : isStockTab ? `
     <div class="store-section-title">我的持仓</div>
     <div id="stock-holdings"></div>
-    <div class="store-section-title">上市股票（上市费 200 CCB，每人最多 5 只，随机波动+每日±10%涨跌停）</div>
-    <div class="sell-form" id="stock-list-form">${stockFormHtml('stock-list', false)}</div>
     ${me.is_admin ? `
-    <div class="store-section-title">管理发行官方股票</div>
-    <div class="sell-form" id="admin-stock-form">${stockFormHtml('admin-stock', true)}</div>` : ''}` : `
+    <div class="store-section-title">发行官方股票（归属 MicroX，发行价 10~1000 CCB）</div>
+    <div class="sell-form" id="admin-stock-form">${stockFormHtml('admin-stock')}</div>` : ''}` : `
     <div class="store-section-title">我的库存</div>
     <div id="store-inventory"></div>
     <div class="store-section-title">开店摆摊（押金 100 CCB，下架退还）</div>
@@ -1417,17 +1415,15 @@ function renderStorePage() {
 
 // ---------- 股市(商店 Tab) ----------
 
-/** 股票上市/发行表单 HTML(上市 vs 管理发行, 价格区间不同) */
-function stockFormHtml(target, admin) {
-  const range = admin ? '1~10000' : '10~1000';
+/** 官方股票发行表单 HTML(仅管理员, 股票归属 MicroX) */
+function stockFormHtml(target) {
   return `
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <input id="${target}-name" placeholder="股票名称(1~12字)" maxlength="12">
-      <input id="${target}-price" type="number" placeholder="初始价${range} CCB" min="1" max="10000" style="width:130px">
+      <input id="${target}-price" type="number" placeholder="发行价 10~1000 CCB" min="10" max="1000" style="width:130px">
       <input id="${target}-vol" type="number" step="0.005" placeholder="波动率 0.005~0.1" min="0.005" max="0.1" style="width:140px">
-      <button class="btn btn-primary" id="${target}-submit" style="padding:7px 14px;font-size:13px">${admin ? '发行' : '上市 200 CCB'}</button>
-    </div>
-    ${admin ? '' : '<div class="admin-note" style="margin-top:6px">上市后你自动持有该股 57% 股份（成本=发行价），股价上涨可卖出获利；其余 43% 供市场买卖。</div>'}`;
+      <button class="btn btn-primary" id="${target}-submit" style="padding:7px 14px;font-size:13px">发行</button>
+    </div>`;
 }
 
 /** 走势迷你图(SVG 折线): 红涨绿跌 */
@@ -1451,18 +1447,14 @@ function sparklineHtml(ticks) {
 
 /** 股票卡片(行情/走势/买卖入口) */
 function stockCard(s) {
-  const changeCls = s.change_24h > 0 ? 'up' : s.change_24h < 0 ? 'down' : 'flat';
-  const changeSign = s.change_24h > 0 ? '+' : '';
-  const aiTag = s.is_ai ? '<span class="store-tag" style="background:linear-gradient(90deg,#ffd400,#ff8c00);color:#000">AI公司</span>' : '';
-  const creator = s.is_ai
-    ? (s.created_name ? `<span class="shop-owner">老板: ${escapeHtml(s.created_name)}</span>` : '')
-    : (s.created_name ? `<span class="shop-owner">创建者: @${escapeHtml(s.created_name)}</span>` : '<span class="store-tag" style="background:#ffd400;color:#000">官方</span>');
+  const changeCls = s.change_day > 0 ? 'up' : s.change_day < 0 ? 'down' : 'flat';
+  const changeSign = s.change_day > 0 ? '+' : '';
   return `
     <div class="store-card">
-      <div class="store-name">${escapeHtml(s.name)} ${aiTag}</div>
-      <div class="store-meta">${creator}<span class="store-tag">现价 <span class="coin">${s.price}</span></span></div>
+      <div class="store-name">${escapeHtml(s.name)} <span class="store-tag" style="background:#ffd400;color:#000">官方</span></div>
+      <div class="store-meta"><span class="store-tag">现价 <span class="coin">${s.price}</span></span></div>
       <div class="store-meta" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span class="stock-change ${changeCls}">${changeSign}${s.change_24h}%</span>
+        <span class="stock-change ${changeCls}">今日 ${changeSign}${s.change_day}%</span>
         <span style="color:var(--text-dim);font-size:12px">昨收 ${s.prev_close}</span>
         <span style="color:var(--text-dim);font-size:12px">量 ${s.volume}</span>
         <span style="color:var(--text-dim);font-size:12px">我的持仓 ${s.my_shares} 股</span>
@@ -1548,9 +1540,9 @@ async function loadStocks() {
   }
 }
 
-/** 绑定上市/发行表单提交 */
+/** 绑定官方股票发行表单提交(仅管理员) */
 function bindStockForms() {
-  const bind = (target, admin) => {
+  const bind = (target) => {
     const btn = document.getElementById(target + '-submit');
     if (!btn) return;
     btn.addEventListener('click', async () => {
@@ -1559,20 +1551,15 @@ function bindStockForms() {
       const volatility = Number(document.getElementById(target + '-vol').value);
       if (!name || !price || !volatility) return toast('请填写完整参数', true);
       try {
-        const d = await api('POST', admin ? '/api/admin/stocks' : '/api/stocks', { name, price, volatility });
-        if (d.balance !== undefined) {
-          me.wallet = d.balance;
-          updateWalletUI();
-        }
-        toast('股票已上市');
+        const d = await api('POST', '/api/admin/stocks', { name, price, volatility });
+        toast('股票已发行');
         loadStocks();
       } catch (err) {
         toast(err.message, true);
       }
     });
   };
-  bind('stock-list', false);
-  bind('admin-stock', true);
+  bind('admin-stock');
 }
 
 /** AI 陪聊卡片(商店): 订阅制必须在商店购买后才能互动 */
@@ -2740,12 +2727,6 @@ function renderAdminUserEdit(id, user) {
           <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" id="admin-grant-item-btn">发放</button>
         </div>
         <div class="sell-form-row" style="border-top:1px solid var(--border-soft);padding-top:12px">
-          <span class="settings-label">转让股票（仅你的持仓）</span>
-          <select class="settings-input" id="admin-grant-stock-sel"></select>
-          <input class="settings-input" id="admin-grant-stock-shares" type="number" min="1" placeholder="股数" style="max-width:90px">
-          <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" id="admin-grant-stock-btn">转让</button>
-        </div>
-        <div class="sell-form-row" style="border-top:1px solid var(--border-soft);padding-top:12px">
           <span class="settings-label">开通陪聊订阅</span>
           <select class="settings-input" id="admin-grant-bot-sel"></select>
           <input class="settings-input" id="admin-grant-bot-days" type="number" min="1" max="3650" value="30" style="max-width:80px">
@@ -2792,18 +2773,13 @@ function renderAdminUserEdit(id, user) {
     });
   });
 
-  // 授予区: 下拉数据填充(物品/股票/陪聊)
+  // 授予区: 下拉数据填充(物品/陪聊)
   const populateAdminGrantSelects = async () => {
     try {
       const itemsData = await api('GET', '/api/admin/items-all');
       const itemSel = $('#admin-grant-item-sel');
       if (itemSel) itemSel.innerHTML = itemsData.items.map((it) =>
         `<option value="${it.id}">${escapeHtml(it.name)}（${TYPE_LABELS[it.type] || it.type}${it.limited ? '·限定' : ''}）</option>`).join('');
-      const holdData = await api('GET', '/api/admin/holdings');
-      const stockSel = $('#admin-grant-stock-sel');
-      if (stockSel) stockSel.innerHTML = holdData.holdings.length
-        ? holdData.holdings.map((h) => `<option value="${h.stock_id}">${escapeHtml(h.name)}（持仓 ${h.shares} 股）</option>`).join('')
-        : '<option value="">（暂无持仓）</option>';
       const botsData = await api('GET', '/api/bots');
       const botSel = $('#admin-grant-bot-sel');
       if (botSel) botSel.innerHTML = botsData.bots.map((b) =>
@@ -2818,17 +2794,6 @@ function renderAdminUserEdit(id, user) {
     try {
       const data = await api('POST', `/api/admin/users/${id}/grant-item`, { item_id: itemId });
       toast(data.granted ? '物品已发放' : '对方已拥有该物品，未重复发放');
-    } catch (err) { toast(err.message, true); }
-  });
-
-  $('#admin-grant-stock-btn')?.addEventListener('click', async () => {
-    const stockId = Number($('#admin-grant-stock-sel')?.value);
-    const shares = Number($('#admin-grant-stock-shares')?.value);
-    if (!stockId || !Number.isInteger(shares) || shares < 1) return toast('请选择股票并填写股数', true);
-    try {
-      await api('POST', `/api/admin/users/${id}/grant-stock`, { stock_id: stockId, shares });
-      toast('股票已转让');
-      populateAdminGrantSelects();
     } catch (err) { toast(err.message, true); }
   });
 
@@ -3953,13 +3918,33 @@ function router() {
   else updateNav('home');
 }
 
-function renderAuth(notice = '') {
+async function renderAuth(notice = '') {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const mode = params.get('mode') === 'register' ? 'register' : 'login';
   const isLogin = mode === 'login';
 
-  // 真人验证题(注册时展示; 答案由服务端校验)
-  const captchaBox = isLogin ? '' : `
+  // 注册页配置(是否启用邮箱验证); 失败按未启用处理
+  let authConfig = { email_verify: false, code_cooldown: 60 };
+  try { authConfig = await api('GET', '/api/auth-config'); } catch { /* 静默 */ }
+
+  // 邮箱验证区(真人/Agent 注册均需要; 发码前需解算图形验证码)
+  const emailVerifyArea = (!isLogin && authConfig.email_verify) ? `
+    <div class="settings-group" id="auth-verify-box">
+      <span class="settings-label">邮箱验证（注册需绑定邮箱）</span>
+      <input class="settings-input" id="auth-email" type="email" placeholder="邮箱" autocomplete="email">
+      <div class="sell-form-row" style="margin-top:8px">
+        <input class="settings-input" id="auth-email-code" placeholder="邮箱验证码(6位)" maxlength="6" autocomplete="one-time-code" style="flex:1;min-width:0">
+        <button class="btn btn-ghost" type="button" id="auth-send-code" style="padding:0 14px;white-space:nowrap">发送验证码</button>
+      </div>
+      <div class="sell-form-row" style="margin-top:8px">
+        <img id="captcha-img" alt="验证码" style="height:52px;border-radius:6px;background:#f2f2f2">
+        <input id="captcha-a" type="text" placeholder="解算后点发送" maxlength="4" autocomplete="off" style="max-width:130px;text-transform:uppercase">
+        <button class="btn btn-ghost" type="button" id="captcha-refresh" style="padding:6px 12px;font-size:12px">换一题</button>
+      </div>
+    </div>` : '';
+
+  // 真人图形验证码区(未启用邮箱验证时的原流程)
+  const humanCaptcha = (!isLogin && !authConfig.email_verify) ? `
     <div class="settings-group" id="auth-human-box">
       <span class="settings-label">图像验证码(真人验证)</span>
       <div class="sell-form-row">
@@ -3967,7 +3952,10 @@ function renderAuth(notice = '') {
         <input id="captcha-a" type="text" placeholder="输入算式结果" maxlength="4" autocomplete="off" style="max-width:130px;text-transform:uppercase">
         <button class="btn btn-ghost" type="button" id="captcha-refresh" style="padding:6px 12px;font-size:12px">换一题</button>
       </div>
-    </div>
+    </div>` : '';
+
+  // Agent 行为规范(注册时, 两种验证模式都保留)
+  const agentBox = isLogin ? '' : `
     <div class="settings-group" id="auth-agent-box" hidden>
       <span class="settings-label">Agent 行为规范（注册即同意）</span>
       <div class="agent-code">
@@ -3991,7 +3979,9 @@ function renderAuth(notice = '') {
           <label><input type="radio" name="acctype" value="human" checked> 我是真人</label>
           <label><input type="radio" name="acctype" value="agent"> 我是 Agent</label>
         </div>
-        ${captchaBox}`}
+        ${emailVerifyArea}
+        ${humanCaptcha}
+        ${agentBox}`}
         <button class="btn btn-primary" type="submit">${isLogin ? '登录' : '注册'}</button>
       </form>
       <p class="auth-switch">
@@ -4000,17 +3990,20 @@ function renderAuth(notice = '') {
       </p>
     </div>`;
 
-  // 真人/Agent 切换: 显示验证题 或 行为规范
+  // 真人/Agent 切换: 显示验证题/邮箱区 或 行为规范
   if (!isLogin) {
     $('#main').querySelectorAll('input[name="acctype"]').forEach((radio) => {
       radio.addEventListener('change', () => {
         const isAgent = $('#main').querySelector('input[name="acctype"]:checked').value === 'agent';
-        $('#auth-human-box').hidden = isAgent;
-        $('#auth-agent-box').hidden = !isAgent;
+        const hb = $('#auth-human-box');
+        if (hb) hb.hidden = isAgent;
+        const ab = $('#auth-agent-box');
+        if (ab) ab.hidden = !isAgent;
       });
     });
     loadCaptcha();
-    $('#captcha-refresh').addEventListener('click', loadCaptcha);
+    $('#captcha-refresh')?.addEventListener('click', loadCaptcha);
+    bindSendEmailCode();
   }
 
   $('#auth-form').addEventListener('submit', async (e) => {
@@ -4020,14 +4013,24 @@ function renderAuth(notice = '') {
     const isAgent = !isLogin && $('#main').querySelector('input[name="acctype"]:checked').value === 'agent';
     try {
       const payload = { username, password, account_type: isAgent ? 'agent' : 'human' };
+      if (!isLogin) {
+        if (authConfig.email_verify) {
+          // 邮箱验证模式: 图形码已在"发送验证码"时校验, 这里用邮箱码作为票据
+          const email = $('#auth-email').value.trim();
+          const emailCode = $('#auth-email-code').value.trim();
+          if (!email || !emailCode) return toast('请填写邮箱与邮箱验证码', true);
+          payload.email = email;
+          payload.email_code = emailCode;
+        } else if (!isAgent) {
+          payload.captcha_token = captchaState.token;
+          payload.captcha_answer = $('#captcha-a').value.trim();
+        }
+      }
       if (isAgent) {
         if (!$('#agent-agree').checked) return toast('请先勾选同意 Agent 行为规范', true);
         payload.agreed = true;
-      } else if (!isLogin) {
-        payload.captcha_token = captchaState.token;
-        payload.captcha_answer = $('#captcha-a').value.trim();
       }
-      // 登录走 /api/login, 注册走 /api/register(之前误写为固定 register 导致无法登录)
+      // 登录走 /api/login, 注册走 /api/register
       const authRes = await api('POST', `/api/${isLogin ? 'login' : 'register'}`, payload);
       if (authRes.new_limited && authRes.new_limited.length) {
         toast(`获得限定物品：${authRes.new_limited.map((g) => g.name).join('、')}`);
@@ -4056,6 +4059,45 @@ async function loadCaptcha() {
     const input = $('#captcha-a');
     if (input) input.value = '';
   } catch { /* 静默 */ }
+}
+
+/** 发送邮箱验证码(需先解算图形验证码); 成功后按钮进入倒计时 */
+function bindSendEmailCode() {
+  const btn = $('#auth-send-code');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const email = $('#auth-email').value.trim();
+    if (!email) return toast('请先填写邮箱', true);
+    const captchaAnswer = $('#captcha-a').value.trim();
+    if (!captchaAnswer) return toast('请先解算图形验证码', true);
+    btn.disabled = true;
+    try {
+      const d = await api('POST', '/api/send-email-code', {
+        email,
+        captcha_token: captchaState.token,
+        captcha_answer: captchaAnswer,
+      });
+      toast('验证码已发送，请查收邮箱');
+      const cd = d.cooldown || 60;
+      let remain = cd;
+      btn.textContent = `${remain}s`;
+      const timer = setInterval(() => {
+        remain -= 1;
+        if (remain <= 0) {
+          clearInterval(timer);
+          btn.textContent = '发送验证码';
+          btn.disabled = false;
+          loadCaptcha(); // 图形码已被发码消耗, 换一题
+        } else {
+          btn.textContent = `${remain}s`;
+        }
+      }, 1000);
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, true);
+      loadCaptcha();
+    }
+  });
 }
 
 /** 陪聊机器人标识(官方模型显示 [官方AI]) */

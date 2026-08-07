@@ -345,6 +345,108 @@ function purgeCaptcha() {
   }
 }
 
+// ---------- SendCloud 邮件(注册邮箱验证) ----------
+
+// 配置优先 process.env, 其次 falix.env(与 TRUST_PROXY 同模式)
+const SENDCLOUD_API_USER = process.env.SENDCLOUD_API_USER ?? envFile.SENDCLOUD_API_USER ?? '';
+const SENDCLOUD_API_KEY = process.env.SENDCLOUD_API_KEY ?? envFile.SENDCLOUD_API_KEY ?? '';
+const SENDCLOUD_FROM = process.env.SENDCLOUD_FROM ?? envFile.SENDCLOUD_FROM ?? '';
+const SENDCLOUD_FROM_NAME = process.env.SENDCLOUD_FROM_NAME ?? envFile.SENDCLOUD_FROM_NAME ?? 'MicroX';
+
+/** 邮箱验证是否启用: 三个必填配置齐全才启用 */
+function emailVerifyEnabled() {
+  return Boolean(SENDCLOUD_API_USER && SENDCLOUD_API_KEY && SENDCLOUD_FROM);
+}
+
+/**
+ * 调用 SendCloud 发送邮件(仅 Node 内置模块)。
+ * POST https://api.sendcloud.net/apiv2/mail/send (application/x-www-form-urlencoded)
+ * @returns {Promise<object>} 成功 resolve, 失败 reject
+ */
+function sendCloudMail(to, subject, html) {
+  const apiUser = SENDCLOUD_API_USER;
+  const apiKey = SENDCLOUD_API_KEY;
+  const from = SENDCLOUD_FROM;
+  if (!apiUser || !apiKey || !from) return Promise.reject(new Error('邮件服务未配置'));
+  const body = new URLSearchParams({
+    apiUser, apiKey, from, fromName: SENDCLOUD_FROM_NAME, to, subject, html,
+  }).toString();
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.sendcloud.net',
+      path: '/apiv2/mail/send',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(data);
+          if (j.result === true) resolve(j);
+          else reject(new Error(j.message || '邮件发送失败'));
+        } catch { reject(new Error('邮件服务响应异常')); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+// 注册邮箱验证码(内存存储, 10 分钟过期)
+const emailCodeStore = new Map(); // key=邮箱 -> { code, iat, exp, attempts }
+const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;          // 验证码有效期
+const EMAIL_CODE_SEND_COOLDOWN_MS = 60 * 1000;     // 同一邮箱重发冷却
+const EMAIL_CODE_DAILY_MAX = 5;                    // 同一邮箱每日最多发码次数
+const EMAIL_CODE_ATTEMPTS_MAX = 5;                 // 同一验证码最多验证尝试次数
+const EMAIL_CODE_BURST = 3;                        // 单 IP 每分钟最多发码次数
+const EMAIL_CODE_BURST_WINDOW_MS = 60 * 1000;
+const emailCodeDaily = new Map();                  // key=邮箱 -> { day, count }
+
+function purgeEmailCodes() {
+  const now = Date.now();
+  for (const [k, v] of emailCodeStore) {
+    if (v.exp < now) emailCodeStore.delete(k);
+  }
+}
+
+/** 校验邮箱格式 */
+function isValidEmail(email) {
+  return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 100;
+}
+
+/** 检查同一邮箱今日发码次数并记账 */
+function emailCodeCanSend(email) {
+  const day = todayUtc().slice(0, 10);
+  const rec = emailCodeDaily.get(email) || { day, count: 0 };
+  if (rec.day !== day) { rec.day = day; rec.count = 0; }
+  if (rec.count >= EMAIL_CODE_DAILY_MAX) return false;
+  rec.count += 1;
+  emailCodeDaily.set(email, rec);
+  return true;
+}
+
+/** 校验邮箱验证码(匹配/未过期/尝试次数), 成功即燃烧 */
+function validateEmailCode(email, code) {
+  const rec = emailCodeStore.get(email);
+  if (!rec || Date.now() > rec.exp) return { ok: false, error: '验证码已过期，请重新获取' };
+  if (rec.attempts >= EMAIL_CODE_ATTEMPTS_MAX) {
+    emailCodeStore.delete(email);
+    return { ok: false, error: '验证码错误次数过多，请重新获取' };
+  }
+  rec.attempts += 1;
+  if (String(code).trim() !== rec.code) {
+    if (rec.attempts >= EMAIL_CODE_ATTEMPTS_MAX) emailCodeStore.delete(email);
+    return { ok: false, error: '验证码错误' };
+  }
+  emailCodeStore.delete(email);
+  return { ok: true };
+}
+
 // 验证码 3×5 点阵字体(渲染为 <rect>, 响应不含可提取的算式文本 → 正则/eval 无法自动解算)
 const CAPTCHA_FONT = {
   '0': ['111', '101', '101', '101', '111'],
@@ -886,6 +988,78 @@ function grantLimitedAndNotify(userId) {
   return granted;
 }
 
+/** GET /api/auth-config: 注册页配置(前端据此决定是否显示邮箱验证区) */
+function handleAuthConfig(req, res) {
+  ok(res, {
+    email_verify: emailVerifyEnabled(),
+    code_cooldown: Math.round(EMAIL_CODE_SEND_COOLDOWN_MS / 1000),
+  });
+}
+
+/** POST /api/send-email-code: 发送注册邮箱验证码(发码前必须通过图形验证码, 防刷邮件) */
+async function handleSendEmailCode(req, res) {
+  const ip = clientIp(req);
+  if (!emailVerifyEnabled()) return fail(res, 503, '邮件服务未配置');
+  if (rateLocked('email-code', ip)) return fail(res, 429, '发送太频繁，请稍后再试');
+  if (rateExceeded('email-code', ip, EMAIL_CODE_BURST, EMAIL_CODE_BURST_WINDOW_MS)) {
+    rateForceLock('email-code', ip);
+    return fail(res, 429, '发送太频繁，请稍后再试');
+  }
+  purgeEmailCodes();
+
+  const body = await parseJsonBody(req);
+  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  if (!isValidEmail(email)) return fail(res, 400, '邮箱格式不正确');
+  if (db.findUserByEmail(email)) return fail(res, 409, '该邮箱已被注册');
+
+  // 图形验证码: 校验后燃烧(与注册时同规格, 防脚本刷邮件)
+  const ct = captchaStore.get(body.captcha_token);
+  if (!ct || Date.now() > ct.exp) {
+    rateFail('email-code', ip, RATE_MAX_FAILS_IP);
+    return fail(res, 400, '验证码已过期，请刷新重试');
+  }
+  if (Date.now() - ct.iat < CAPTCHA_MIN_MS) {
+    captchaStore.delete(body.captcha_token);
+    rateFail('email-code', ip, RATE_MAX_FAILS_IP);
+    return fail(res, 400, '验证码校验过快，请重新输入图中算式结果');
+  }
+  if (String(body.captcha_answer).trim() !== ct.answer) {
+    captchaStore.delete(body.captcha_token);
+    rateFail('email-code', ip, RATE_MAX_FAILS_IP);
+    return fail(res, 400, '验证码错误');
+  }
+  captchaStore.delete(body.captcha_token);
+
+  // 同一邮箱重发冷却
+  const lastRec = emailCodeStore.get(email);
+  if (lastRec && Date.now() - lastRec.iat < EMAIL_CODE_SEND_COOLDOWN_MS) {
+    const waitSec = Math.ceil((EMAIL_CODE_SEND_COOLDOWN_MS - (Date.now() - lastRec.iat)) / 1000);
+    return fail(res, 429, `发送太频繁，请 ${waitSec} 秒后再试`);
+  }
+  // 同一邮箱每日发码上限
+  if (!emailCodeCanSend(email)) return fail(res, 429, `该邮箱今日发码次数已达上限(${EMAIL_CODE_DAILY_MAX})`);
+
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  emailCodeStore.set(email, { code, iat: Date.now(), exp: Date.now() + EMAIL_CODE_TTL_MS, attempts: 0 });
+
+  const subject = 'MicroX 注册验证码';
+  const html = `<div style="font-family:sans-serif;max-width:420px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px">`
+    + `<h2 style="margin:0 0 12px">MicroX 注册验证</h2>`
+    + `<p style="color:#374151">你的注册验证码是:</p>`
+    + `<p style="font-size:32px;font-weight:700;letter-spacing:6px;color:#0ea5b7">${code}</p>`
+    + `<p style="color:#9ca3af;font-size:13px">验证码 ${Math.round(EMAIL_CODE_TTL_MS / 60000)} 分钟内有效。若非本人操作请忽略本邮件。</p>`
+    + `</div>`;
+
+  try {
+    await sendCloudMail(email, subject, html);
+    ok(res, { cooldown: Math.round(EMAIL_CODE_SEND_COOLDOWN_MS / 1000) });
+  } catch (err) {
+    emailCodeStore.delete(email);
+    console.error('[mail] 验证码发送失败:', err.message);
+    fail(res, 502, '邮件发送失败，请稍后再试');
+  }
+}
+
 async function handleRegister(req, res) {
   // 安全加固: 单 IP 注册限速(防批量注册)
   const ip = clientIp(req);
@@ -921,29 +1095,47 @@ async function handleRegister(req, res) {
     rateFail('reg', ip, RATE_MAX_FAILS_IP);
     return fail(res, 400, '必须同意 Agent 行为规范才能注册');
   }
-  // 真人/Agent 一律校验算术验证码(答案在服务端, 不在响应中)
-  const ct = captchaStore.get(body.captcha_token);
-  if (!ct || Date.now() > ct.exp) {
-    rateFail('reg', ip, RATE_MAX_FAILS_IP);
-    return fail(res, 400, '验证码已过期，请刷新重试');
-  }
-  // 安全加固: 校验失败(过快/答错)即焚毁 token, 每次校验最多尝试一次 → 无法按 token 穷举答案
-  if (Date.now() - ct.iat < CAPTCHA_MIN_MS) {
-    // 签发后 1.5 秒内提交视为脚本行为
+
+  let email = '';
+  if (emailVerifyEnabled()) {
+    // 已配置 SendCloud: 注册必须绑定邮箱并通过邮箱验证码
+    // (图形验证码已在"发送验证码"时校验并燃烧, 这里用邮箱码作为注册票据)
+    email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (!isValidEmail(email)) {
+      rateFail('reg', ip, RATE_MAX_FAILS_IP);
+      return fail(res, 400, '邮箱格式不正确');
+    }
+    if (db.findUserByEmail(email)) return fail(res, 409, '该邮箱已被注册');
+    const v = validateEmailCode(email, body.email_code);
+    if (!v.ok) {
+      rateFail('reg', ip, RATE_MAX_FAILS_IP);
+      return fail(res, 400, v.error);
+    }
+  } else {
+    // 未配置邮件服务: 走原有图形验证码流程(注册不要求邮箱)
+    const ct = captchaStore.get(body.captcha_token);
+    if (!ct || Date.now() > ct.exp) {
+      rateFail('reg', ip, RATE_MAX_FAILS_IP);
+      return fail(res, 400, '验证码已过期，请刷新重试');
+    }
+    // 安全加固: 校验失败(过快/答错)即焚毁 token, 每次校验最多尝试一次 → 无法按 token 穷举答案
+    if (Date.now() - ct.iat < CAPTCHA_MIN_MS) {
+      // 签发后 1.5 秒内提交视为脚本行为
+      captchaStore.delete(body.captcha_token);
+      rateFail('reg', ip, RATE_MAX_FAILS_IP);
+      return fail(res, 400, '验证码校验过快，请重新输入图中算式结果');
+    }
+    if (String(body.captcha_answer).trim() !== ct.answer) {
+      captchaStore.delete(body.captcha_token);
+      rateFail('reg', ip, RATE_MAX_FAILS_IP);
+      return fail(res, 400, '验证码错误');
+    }
     captchaStore.delete(body.captcha_token);
-    rateFail('reg', ip, RATE_MAX_FAILS_IP);
-    return fail(res, 400, '验证码校验过快，请重新输入图中算式结果');
   }
-  if (String(body.captcha_answer).trim() !== ct.answer) {
-    captchaStore.delete(body.captcha_token);
-    rateFail('reg', ip, RATE_MAX_FAILS_IP);
-    return fail(res, 400, '验证码错误');
-  }
-  captchaStore.delete(body.captcha_token);
 
   const salt = crypto.randomBytes(16).toString('hex');
   // 新用户钱包默认 100(建表 DEFAULT)
-  const userId = db.createUser(username, hashPassword(password, salt), salt, 0, isAgent ? 'agent' : 'human');
+  const userId = db.createUser(username, hashPassword(password, salt), salt, 0, isAgent ? 'agent' : 'human', email);
 
   const token = crypto.randomBytes(32).toString('hex');
   db.createSession(token, userId);
@@ -954,7 +1146,7 @@ async function handleRegister(req, res) {
   regDaily.set(ip, { date: regDay, count: (prevReg && prevReg.date === regDay ? prevReg.count : 0) + 1 });
   // 注册即登录, 自动领取限定物品
   const newLimited = grantLimitedAndNotify(userId);
-  ok(res, { id: userId, username, account_type: isAgent ? 'agent' : 'human', new_limited: newLimited });
+  ok(res, { id: userId, username, account_type: isAgent ? 'agent' : 'human', email, new_limited: newLimited });
 }
 
 async function handleLogin(req, res) {
@@ -2263,29 +2455,6 @@ async function handleAdminGrantItem(req, res, segs) {
   ok(res, { granted, item: { id: item.id, name: item.name, type: item.type } });
 }
 
-/** POST /api/admin/users/:id/grant-stock: 转让管理员自己已持有的股票 */
-async function handleAdminGrantStock(req, res, segs) {
-  const admin = requireAdmin(req, res);
-  if (!admin) return;
-  const targetId = Number(segs[3]);
-  if (!Number.isInteger(targetId) || targetId <= 0) return fail(res, 400, '用户 ID 不合法');
-  if (targetId === admin.id) return fail(res, 400, '不能转让给自己');
-  const target = db.getUserById(targetId);
-  if (!target) return fail(res, 404, '用户不存在');
-  const body = await parseJsonBody(req);
-  const stockId = Number(body.stock_id);
-  const shares = Number(body.shares);
-  if (!Number.isInteger(stockId) || stockId <= 0) return fail(res, 400, '股票 ID 不合法');
-  if (!Number.isInteger(shares) || shares < 1 || shares > STOCK_ORDER_MAX) {
-    return fail(res, 400, `单笔需转让 1~${STOCK_ORDER_MAX} 股`);
-  }
-  const stock = db.getStockById(stockId);
-  if (!stock) return fail(res, 404, '股票不存在');
-  const r = db.transferStock(admin.id, targetId, stockId, shares);
-  if (!r.ok) return fail(res, 400, r.error);
-  ok(res, { shares: r.shares, stock: { id: stock.id, name: stock.name } });
-}
-
 /** POST /api/admin/users/:id/grant-bot-sub: 直接开通陪聊订阅(不要求管理员拥有该陪聊) */
 async function handleAdminGrantBotSub(req, res, segs) {
   const admin = requireAdmin(req, res);
@@ -2545,13 +2714,6 @@ function handleAdminItemsAll(req, res) {
     }
   }
   ok(res, { items });
-}
-
-/** GET /api/admin/holdings: 管理员自己的全部持仓(授予股票下拉数据源) */
-function handleAdminHoldings(req, res) {
-  const admin = requireAdmin(req, res);
-  if (!admin) return;
-  ok(res, { holdings: db.getUserHoldings(admin.id) });
 }
 
 /** POST /api/admin/broadcast: 选中的官方 AI 批量发帖 + 群发私信(不调用 AI API) */
@@ -3249,33 +3411,31 @@ function botEquipItem(bot, itemId) {
   return { ok: true };
 }
 
-// ---------- 股票市场 ----------
+// ---------- 股票市场(仅官方发行, 股票归属 MicroX) ----------
 
-// 行情跳动间隔(默认 10 分钟; 测试可用环境变量调小)
+// 行情跳动间隔(默认 5 分钟; 测试可用环境变量调小)
 const STOCK_TICK_MS = process.env.STOCK_TICK_MS !== undefined ? Number(process.env.STOCK_TICK_MS) : 5 * 60 * 1000;
 const STOCK_FEE_RATE = 0.01;    // 买卖手续费率(1%, 燃烧回收, 冲抵随机涨跌造成的通胀)
 const STOCK_FEE_MIN = 1;        // 单笔手续费下限(CCB)
 const STOCK_ORDER_MAX = 1000;   // 单笔最大股数
-const STOCK_PRICE_MIN = 1;      // 价格下限
-const STOCK_PRICE_MAX = 10000;  // 价格上限
+const STOCK_PRICE_MIN = 1;      // 现价下限(行情随机游走边界)
+const STOCK_PRICE_MAX = 10000;  // 现价上限(行情随机游走边界)
+const STOCK_ISSUE_MIN = 10;     // 官方发行价下限
+const STOCK_ISSUE_MAX = 1000;   // 官方发行价上限(防单只市值过大)
 const STOCK_DAY_LIMIT = 0.1;    // 每日涨跌停 ±10%(对照昨收, A 股风格)
-const STOCK_VOL_MIN = 0.005;    // 用户上市波动率下限
-const STOCK_VOL_MAX = 0.1;      // 用户上市波动率上限
-const STOCK_LIST_FEE = 200;     // 用户上市费(CCB)
-const STOCK_LIST_MAX = 5;       // 每人最多创建的股票数
-const AI_STOCK_SHARES = 10000;  // AI 公司股票发行总量
-const AI_STOCK_BOT_RATIO = 0.8; // AI 持有 80%, 创建者持有 20%
-const USER_STOCK_SHARES = 10000;       // 用户创建股票的总发行量(与 AI 公司股票一致)
-const USER_STOCK_CREATOR_RATIO = 0.57; // 创建者自动持有比例(57%), 剩余 43% 进入市场流通
+const STOCK_VOL_MIN = 0.005;    // 波动率下限
+const STOCK_VOL_MAX = 0.1;      // 波动率上限
 const AI_TRADE_DAILY_MAX = 1000; // AI 每日股票交易额上限(买/卖合计)
 const AI_TRADE_CHANCE = 0.3;    // 每轮行情跳动 AI 参与交易的概率
-const TRADE_IMPACT_K = 0.5;     // 交易冲击敏感度: 价格变动 = 现价 × (成交股数/流通股) × K
+// 用户交易节流: 同一股票冷却 + 每日笔数/成交额上限(防脚本刷单套利)
+const STOCK_USER_COOLDOWN_MS = 5 * 1000;    // 同一用户同一股票买卖冷却(5 秒)
+const STOCK_USER_DAILY_MAX = 50;            // 每用户每日交易笔数上限
+const STOCK_USER_DAILY_TURNOVER = 50000;    // 每用户每日成交额上限(买+卖合计, CCB)
+const userTradeLog = new Map();             // `${userId}:${stockId}` -> 冷却时间戳; `${userId}:day` -> 当日统计
 
 /** 当前行情交易日(UTC 日期), 跨日时以现价重置全部昨收 */
 let stockDay = todayUtc().slice(0, 10);
 
-/** AI 股票起名进行中(防并发重复创建) */
-const aiStockNaming = new Set();
 /** AI 交易节流记录(botId -> { day, dayTotal }) */
 const aiTradeLog = new Map();
 
@@ -3313,13 +3473,9 @@ function buildStockContext() {
   return `【股票市场行情(现价 CCB/股, 可用 CCB 买卖)】\n` + lines.join('\n');
 }
 
-/** 机器人当前持仓与公司股票摘要(供 AI 决策卖出/了解自己身家) */
+/** 机器人当前股票持仓摘要(供 AI 决策卖出/了解自己身家) */
 function buildBotPortfolioContext(bot) {
   const parts = [];
-  const own = db.getAiStockOfBot(bot.user_id);
-  if (own) {
-    parts.push(`你的公司股票: ${own.name}(ID ${own.id}), 现价 ${own.price} CCB/股, 你持有 ${db.getHolding(bot.user_id, own.id)} 股`);
-  }
   const holds = db.getUserHoldings(bot.user_id);
   for (const h of holds.slice(0, 5)) {
     parts.push(`你持有 ${h.name}(ID ${h.stock_id}) ${h.shares} 股, 市值约 ${h.shares * h.price} CCB`);
@@ -3370,21 +3526,22 @@ function buyStock(userId, stockId, shares) {
   }
   const stock = db.getStockById(stockId);
   if (!stock || !stock.enabled) return { ok: false, error: '股票不存在或已停牌' };
-  const amount = shares * stock.price;
-  const fee = Math.max(STOCK_FEE_MIN, Math.round(amount * STOCK_FEE_RATE));
-  if (db.getWallet(userId) < amount + fee) return { ok: false, error: 'CCB不足' };
-  db.addWallet(userId, -(amount + fee));
-  // 加权平均成本: 新成本 = (旧股数×旧成本 + 本次买入额) / 新股数(手续费不计入成本)
-  const oldShares = db.getHolding(userId, stockId);
-  const oldAvg = oldShares > 0 ? db.getHoldingAvg(userId, stockId) : 0;
-  const newAvg = oldShares > 0 ? Math.round((oldShares * oldAvg + amount) / (oldShares + shares)) : stock.price;
-  db.setHolding(userId, stockId, oldShares + shares, newAvg);
-  // 交易冲击: 按成交前流通股计算(市场深度), 再增发
-  applyTradeImpact(stock, shares);
-  db.setStockSharesOut(stockId, stock.shares_out + shares);
-  db.addStockVolume(stockId, shares);
-  db.recordTrade(stockId, userId, 'buy', shares, stock.price, fee);
-  return { ok: true, shares, amount, fee };
+  return db.runInTransaction(() => {
+    const amount = shares * stock.price;
+    const fee = Math.max(STOCK_FEE_MIN, Math.round(amount * STOCK_FEE_RATE));
+    if (db.getWallet(userId) < amount + fee) return { ok: false, error: 'CCB不足' };
+    db.addWallet(userId, -(amount + fee));
+    // 加权平均成本: 新成本 = (旧股数×旧成本 + 本次买入额) / 新股数(手续费不计入成本)
+    const oldShares = db.getHolding(userId, stockId);
+    const oldAvg = oldShares > 0 ? db.getHoldingAvg(userId, stockId) : 0;
+    const newAvg = oldShares > 0 ? Math.round((oldShares * oldAvg + amount) / (oldShares + shares)) : stock.price;
+    db.setHolding(userId, stockId, oldShares + shares, newAvg);
+    // 无交易冲击: 买卖按同一现价成交, 价格只由行情随机游走驱动(防自成交套利)
+    db.setStockSharesOut(stockId, stock.shares_out + shares);
+    db.addStockVolume(stockId, shares);
+    db.recordTrade(stockId, userId, 'buy', shares, stock.price, fee);
+    return { ok: true, shares, amount, fee };
+  });
 }
 
 /**
@@ -3397,19 +3554,20 @@ function sellStock(userId, stockId, shares) {
   }
   const stock = db.getStockById(stockId);
   if (!stock || !stock.enabled) return { ok: false, error: '股票不存在或已停牌' };
-  const hold = db.getHolding(userId, stockId);
-  if (hold < shares) return { ok: false, error: '持仓不足' };
-  const amount = shares * stock.price;
-  const fee = Math.max(STOCK_FEE_MIN, Math.round(amount * STOCK_FEE_RATE));
-  // 卖出: 成本不变, 只减股数(盈亏在持仓展示中按实时价格浮动计算)
-  db.setHolding(userId, stockId, hold - shares, db.getHoldingAvg(userId, stockId));
-  db.addWallet(userId, amount - fee);
-  // 交易冲击: 按成交前流通股计算, 再注销
-  applyTradeImpact(stock, -shares);
-  db.setStockSharesOut(stockId, Math.max(0, stock.shares_out - shares));
-  db.addStockVolume(stockId, shares);
-  db.recordTrade(stockId, userId, 'sell', shares, stock.price, fee);
-  return { ok: true, shares, amount, fee };
+  return db.runInTransaction(() => {
+    const hold = db.getHolding(userId, stockId);
+    if (hold < shares) return { ok: false, error: '持仓不足' };
+    const amount = shares * stock.price;
+    const fee = Math.max(STOCK_FEE_MIN, Math.round(amount * STOCK_FEE_RATE));
+    // 卖出: 成本不变, 只减股数(盈亏在持仓展示中按实时价格浮动计算)
+    db.setHolding(userId, stockId, hold - shares, db.getHoldingAvg(userId, stockId));
+    db.addWallet(userId, amount - fee);
+    // 无交易冲击: 按同一现价成交, 价格只由行情随机游走驱动
+    db.setStockSharesOut(stockId, Math.max(0, stock.shares_out - shares));
+    db.addStockVolume(stockId, shares);
+    db.recordTrade(stockId, userId, 'sell', shares, stock.price, fee);
+    return { ok: true, shares, amount, fee };
+  });
 }
 
 /** 价格夹紧: 全局上下限 + 每日 ±10% 涨跌停(对照昨收) */
@@ -3420,23 +3578,7 @@ function clampPrice(stock, p) {
   return Math.max(lo, Math.min(hi, p));
 }
 
-/**
- * 交易冲击: 买卖影响股价(买入推高/卖出压低), 幅度 = 现价 × (成交股数/流通股) × K, 最低 1 CCB。
- * 价格变化被 clampPrice 夹在全局与涨跌停范围内, 并记录 tick 供走势图展示。
- * @param {object} stock 股票行(须为最新)
- * @param {number} shares 成交股数(正=买入, 负=卖出)
- */
-function applyTradeImpact(stock, shares) {
-  const ratio = shares / Math.max(stock.shares_out, 1);
-  let delta = Math.max(1, Math.round(stock.price * Math.abs(ratio) * TRADE_IMPACT_K));
-  let p = clampPrice(stock, stock.price + (shares > 0 ? delta : -delta));
-  if (p !== stock.price) {
-    db.updateStockPrice(stock.id, p);
-    db.insertTick(stock.id, p);
-  }
-}
-
-/** 单次行情跳动: 随机游走 + 涨跌停夹紧 */
+/** 单次行情跳动: 随机游走 + 涨跌停夹紧(买卖不改变价格, 杜绝自成交套利) */
 function tickOneStock(stock) {
   // 中心在 0 的随机游走: 幅度由波动率决定(最大单跳为波动率)
   const drift = (Math.random() - 0.5) * 2 * stock.volatility;
@@ -3490,64 +3632,6 @@ function aiTradeAll() {
   }
 }
 
-/**
- * 补建 AI 机器人公司股票: 每个启用机器人自动拥有一支(名字由 AI 自行决定, 起名失败兜底"xx股份")。
- * 发行 10000 股: AI 持有 80%, 创建者持有 20%(收益按持股比例分配)。
- */
-async function ensureAiStocks() {
-  for (const bot of db.getActiveBots()) {
-    if (db.getAiStockOfBot(bot.user_id)) continue;
-    if (aiStockNaming.has(bot.user_id)) continue;
-    aiStockNaming.add(bot.user_id);
-    try {
-      // 先尝试让 AI 自己起名(失败或重名则兜底)
-      let name = '';
-      if (bot.api_base_url && bot.api_key && bot.api_model) {
-        try {
-          name = await callAi(bot, [{
-            role: 'user',
-            content: '你即将创办一家公司并在股市上市。请为你的公司股票起一个 2~6 字的中文名称(例如"喵星科技")。只输出名称本身，不要任何解释或其他字符。',
-          }]);
-          name = String(name).replace(/[^0-9a-zA-Z\u4e00-\u9fa5]/g, '').slice(0, 12);
-        } catch { name = ''; }
-      }
-      if (!name || db.getStockByName(name)) name = bot.username + '股份';
-      if (db.getStockByName(name)) name = bot.username + '_' + Math.floor(Math.random() * 1000);
-      const stockId = db.createStock({
-        name, price: 100, volatility: 0.03, createdBy: bot.user_id, isAi: 1,
-      });
-      // 初始分配: AI 80% / 创建者 20%, 成本按发行价 100 计(初始盈亏为 0)
-      const botShares = Math.round(AI_STOCK_SHARES * AI_STOCK_BOT_RATIO);
-      db.setHolding(bot.user_id, stockId, botShares, 100);
-      db.setHolding(bot.creator_id, stockId, AI_STOCK_SHARES - botShares, 100);
-      db.insertTick(stockId, 100);
-      console.log('[ai]', bot.username, '公司股票上市:', name, `(发行 ${AI_STOCK_SHARES} 股: AI ${botShares} / 创建者 ${AI_STOCK_SHARES - botShares})`);
-    } catch (err) {
-      console.error('[ai]', bot.username, '股票创建失败:', err.message);
-    } finally {
-      aiStockNaming.delete(bot.user_id);
-    }
-  }
-}
-
-/** 首次启动预置官方股票(仅当库中完全没有股票时) */
-function seedOfficialStocks() {
-  if (db.hasAnyStock()) return;
-  const admin = db.findUserByUsername(ADMIN_USERNAME);
-  const adminId = admin ? admin.id : 0;
-  const presets = [
-    { name: '微X科技', price: 300, volatility: 0.02 },
-    { name: '猫娘娱乐', price: 150, volatility: 0.04 },
-    { name: '星辰网络', price: 500, volatility: 0.02 },
-    { name: '山茶花传媒', price: 80, volatility: 0.05 },
-    { name: '数据喵互娱', price: 220, volatility: 0.03 },
-  ];
-  for (const p of presets) {
-    const id = db.createStock({ name: p.name, price: p.price, volatility: p.volatility, createdBy: adminId, isAi: 0 });
-    db.insertTick(id, p.price);
-  }
-  console.log('[stock] 已预置 5 只官方股票');
-}
 
 /** 官方陪聊 Kita 已移除(2026-08-06): 不再自动预置官方陪聊, 现有数据库请手动清理 */
 
@@ -4080,8 +4164,6 @@ async function engageBots() {
   refillBotWallets();
   // 过期未领取的转账/红包自动退回发送者(24h)
   refundExpiredPayments();
-  // 补建缺股票的机器人的公司股票(每轮检查, 已创建则跳过)
-  await ensureAiStocks();
   // 总开关(管理员可调): 关闭后跳过所有主动互动(用户私信/@回复等被用户触发的回应仍保留)
   if (aiSetting('ai_interact_enabled', '1') !== '1') return;
   const bots = db.getActiveBots().filter((b) => b.api_base_url && b.api_key && b.api_model);
@@ -4318,17 +4400,16 @@ async function handleBotToggle(req, res, segs) {
 
 // ---------- 股票 API ----------
 
-/** 校验股票创建参数(名称/初始价/波动率), 返回错误信息或 null */
-function validateStockForm(body, allowAdminPrice) {
+/** 校验股票发行参数(名称/发行价/波动率), 返回错误信息或 null */
+function validateStockForm(body) {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const lenName = codePointLength(name);
   if (lenName < 1 || lenName > 12) return { error: '股票名称需为 1~12 个字符' };
   if (db.getStockByName(name)) return { error: '该股票名称已存在' };
   const price = Number(body.price);
-  // 用户上市价格限制 10~1000(防垄断高价股), 管理员可 1~10000
   if (!Number.isInteger(price)) return { error: '初始价格需为整数' };
-  if (allowAdminPrice ? (price < STOCK_PRICE_MIN || price > STOCK_PRICE_MAX) : (price < 10 || price > 1000)) {
-    return { error: allowAdminPrice ? `初始价格需为 ${STOCK_PRICE_MIN}~${STOCK_PRICE_MAX} CCB` : '初始价格需为 10~1000 CCB' };
+  if (price < STOCK_ISSUE_MIN || price > STOCK_ISSUE_MAX) {
+    return { error: `初始价格需为 ${STOCK_ISSUE_MIN}~${STOCK_ISSUE_MAX} CCB` };
   }
   const vol = Number(body.volatility);
   if (!Number.isFinite(vol) || vol < STOCK_VOL_MIN || vol > STOCK_VOL_MAX) {
@@ -4337,7 +4418,7 @@ function validateStockForm(body, allowAdminPrice) {
   return { name, price, volatility: vol };
 }
 
-/** GET /api/stocks: 股票列表(现价/24h涨跌/成交量/我的持仓/走势数据) */
+/** GET /api/stocks: 股票列表(现价/今日涨跌/成交量/我的持仓/走势数据) */
 function handleStocksList(req, res) {
   const viewer = currentUser(req);
   const viewerId = viewer ? viewer.id : 0;
@@ -4345,8 +4426,8 @@ function handleStocksList(req, res) {
   const holdMap = new Map(holdings.map((h) => [h.stock_id, h]));
   const stocks = db.getActiveStocks().map((s) => {
     const ticks = db.getTicks(s.id, 48);
-    // 24h 涨跌幅: 以最早一条 tick 为基准(新股票则以初始价)
-    const base = ticks.length > 0 ? ticks[0].price : s.price;
+    // 今日涨跌幅: 对照昨收(±10% 涨跌停基准, 新上市首日昨收=发行价)
+    const base = s.prev_close > 0 ? s.prev_close : s.price;
     const change = base > 0 ? Math.round(((s.price - base) / base) * 1000) / 10 : 0;
     const creator = db.getUserById(s.created_by);
     const mine = holdMap.get(s.id);
@@ -4354,7 +4435,7 @@ function handleStocksList(req, res) {
       id: s.id, name: s.name, price: s.price, prev_close: s.prev_close,
       volatility: s.volatility, volume: s.volume, is_ai: s.is_ai,
       created_name: creator ? creator.username : '',
-      change_24h: change,
+      change_day: change,
       my_shares: mine ? mine.shares : 0,
       my_avg_cost: mine ? mine.avg_cost : 0,
       ticks: ticks.map((t) => t.price),
@@ -4382,36 +4463,44 @@ function handleStockDetail(req, res, segs) {
   });
 }
 
-/** POST /api/stocks: 用户上市(200 CCB 上市费, 每人最多 5 只) */
-async function handleStockCreate(req, res) {
-  const user = requireUser(req, res);
-  if (!user) return;
-  if (db.countStocksByCreator(user.id) >= STOCK_LIST_MAX) {
-    return fail(res, 400, `每人最多创建 ${STOCK_LIST_MAX} 只股票`);
+/** 用户交易节流: 同一股票冷却 + 每日笔数/成交额任一超限即拒绝(防脚本刷单) */
+function userTradeAllowed(userId, stockId, amount) {
+  const now = Date.now();
+  const day = todayUtc().slice(0, 10);
+  const coolKey = `${userId}:${stockId}`;
+  const lastTs = userTradeLog.get(coolKey) || 0;
+  if (now - lastTs < STOCK_USER_COOLDOWN_MS) {
+    const waitSec = Math.ceil((STOCK_USER_COOLDOWN_MS - (now - lastTs)) / 1000);
+    return { ok: false, error: `操作太频繁，请 ${waitSec} 秒后再试` };
   }
-  const body = await parseJsonBody(req);
-  const form = validateStockForm(body, false);
-  if (form.error) return fail(res, 400, form.error);
-  if (!trySpend(user.id, STOCK_LIST_FEE)) return fail(res, 400, `上市费不足，需要 ${STOCK_LIST_FEE} CCB`);
-
-  const stockId = db.createStock({ name: form.name, price: form.price, volatility: form.volatility, createdBy: user.id, isAi: 0 });
-  // 创建者自动持有 57% 股份(成本=发行价, 初始盈亏为 0): 股价上涨时创建者可卖出获利, 其余 43% 供市场买卖
-  const creatorShares = Math.round(USER_STOCK_SHARES * USER_STOCK_CREATOR_RATIO);
-  db.setHolding(user.id, stockId, creatorShares, form.price);
-  db.insertTick(stockId, form.price);
-  ok(res, { id: stockId, balance: db.getWallet(user.id) });
+  const dayKey = `${userId}:day`;
+  const log = userTradeLog.get(dayKey) || { day, count: 0, turnover: 0 };
+  if (log.day !== day) { log.day = day; log.count = 0; log.turnover = 0; }
+  if (log.count >= STOCK_USER_DAILY_MAX) return { ok: false, error: `今日交易次数已达上限(${STOCK_USER_DAILY_MAX})` };
+  if (log.turnover + amount > STOCK_USER_DAILY_TURNOVER) return { ok: false, error: `今日成交额已达上限(${STOCK_USER_DAILY_TURNOVER} CCB)` };
+  log.count += 1;
+  log.turnover += amount;
+  userTradeLog.set(dayKey, log);
+  userTradeLog.set(coolKey, now);
+  return { ok: true };
 }
 
-/** POST /api/stocks/:id/buy 与 /api/stocks/:id/sell: 买卖(做市商模型) */
+/** POST /api/stocks/:id/buy 与 /api/stocks/:id/sell: 买卖(做市商模型, 无交易冲击) */
 async function handleStockTrade(req, res, segs, side) {
   const user = requireUser(req, res);
   if (!user) return;
   const stockId = Number(segs[2]);
   if (!Number.isInteger(stockId) || stockId <= 0) return fail(res, 400, '股票 ID 不合法');
   const body = await parseJsonBody(req);
+  const shares = Number(body.shares);
+  const stock = db.getStockById(stockId);
+  if (!stock || !stock.enabled) return fail(res, 400, '股票不存在或已停牌');
+  const amount = shares * stock.price;
+  const gate = userTradeAllowed(user.id, stockId, amount);
+  if (!gate.ok) return fail(res, 429, gate.error);
   const r = side === 'buy'
-    ? buyStock(user.id, stockId, Number(body.shares))
-    : sellStock(user.id, stockId, Number(body.shares));
+    ? buyStock(user.id, stockId, shares)
+    : sellStock(user.id, stockId, shares);
   if (!r.ok) return fail(res, 400, r.error);
   ok(res, { ...r, balance: db.getWallet(user.id) });
 }
@@ -4421,7 +4510,7 @@ async function handleAdminStockCreate(req, res) {
   const admin = requireAdmin(req, res);
   if (!admin) return;
   const body = await parseJsonBody(req);
-  const form = validateStockForm(body, true);
+  const form = validateStockForm(body);
   if (form.error) return fail(res, 400, form.error);
   const stockId = db.createStock({ name: form.name, price: form.price, volatility: form.volatility, createdBy: admin.id, isAi: 0 });
   db.insertTick(stockId, form.price);
@@ -4439,6 +4528,8 @@ async function route(req, res) {
 
     // 账号
     if (req.method === 'GET' && sub === 'captcha') return handleCaptcha(req, res);
+    if (req.method === 'GET' && sub === 'auth-config') return handleAuthConfig(req, res);
+    if (req.method === 'POST' && sub === 'send-email-code') return await handleSendEmailCode(req, res);
     if (req.method === 'POST' && sub === 'register') return await handleRegister(req, res);
     if (req.method === 'POST' && sub === 'login') return await handleLogin(req, res);
     if (req.method === 'POST' && sub === 'logout') return handleLogout(req, res);
@@ -4500,12 +4591,10 @@ async function route(req, res) {
     if (req.method === 'DELETE' && sub === 'admin' && segs[2] === 'users' && segs.length === 4) return handleAdminUserDelete(req, res, segs);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'users' && segs.length === 5 && segs[4] === 'penalty') return await handleAdminPenalty(req, res, segs);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'users' && segs.length === 5 && segs[4] === 'grant-item') return await handleAdminGrantItem(req, res, segs);
-    if (req.method === 'POST' && sub === 'admin' && segs[2] === 'users' && segs.length === 5 && segs[4] === 'grant-stock') return await handleAdminGrantStock(req, res, segs);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'users' && segs.length === 5 && segs[4] === 'grant-bot-sub') return await handleAdminGrantBotSub(req, res, segs);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'conversations') return handleAdminConversations(req, res);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'messages') return handleAdminMessages(req, res);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'items-all') return handleAdminItemsAll(req, res);
-    if (req.method === 'GET' && sub === 'admin' && segs[2] === 'holdings' && segs.length === 3) return handleAdminHoldings(req, res);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'broadcast' && segs.length === 3) return await handleAdminBroadcast(req, res);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'tickets' && segs.length === 3) return handleAdminTickets(req, res);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'tickets' && segs.length === 5 && segs[4] === 'reply') return await handleAdminTicketReply(req, res, segs);
@@ -4545,9 +4634,8 @@ async function route(req, res) {
     if (req.method === 'GET' && sub === 'announcements' && segs.length === 2) return handleAnnouncements(req, res);
     if (req.method === 'GET' && sub === 'about' && segs.length === 2) return handleAbout(req, res);
 
-    // 股票
+    // 股票(仅官方发行, 归属 MicroX)
     if (req.method === 'GET' && sub === 'stocks' && segs.length === 2) return handleStocksList(req, res);
-    if (req.method === 'POST' && sub === 'stocks' && segs.length === 2) return await handleStockCreate(req, res);
     if (req.method === 'GET' && sub === 'stocks' && segs.length === 3) return handleStockDetail(req, res, segs);
     if (req.method === 'POST' && sub === 'stocks' && segs.length === 4 && segs[3] === 'buy') return await handleStockTrade(req, res, segs, 'buy');
     if (req.method === 'POST' && sub === 'stocks' && segs.length === 4 && segs[3] === 'sell') return await handleStockTrade(req, res, segs, 'sell');
@@ -4671,8 +4759,6 @@ function getLanIps() {
 // 启动前确保管理员账号存在, 并清理过期会话
 ensureAdmin();
 db.pruneExpiredSessions();
-// 首次启动预置官方股票(仅当库中完全没有股票时)
-seedOfficialStocks();
 // 奖励配置默认值种入 settings(仅补缺失键, 不覆盖管理员已调整的值);
 // 保证 server.js 与 db.js 读取一致的数值, 且管理页展示即实际生效值
 for (const [key, def] of Object.entries(REWARD_DEFAULTS)) {
@@ -4696,7 +4782,7 @@ semanticCache.initSemanticCache(db.db);
 module.exports = {
   botBuyItem, botEquipItem, parseBotStoreActions, buildStoreContext, buildBotSystemPrompt,
   parseBotStockActions, buildStockContext, buildBotPortfolioContext, aiTradeState, aiTradeSpend,
-  buyStock, sellStock, stockTickAll, aiTradeAll, ensureAiStocks, refillBotWallets,
+  buyStock, sellStock, stockTickAll, aiTradeAll, userTradeAllowed, refillBotWallets,
 };
 
 if (require.main === module) {
