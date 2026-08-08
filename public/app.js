@@ -677,7 +677,7 @@ async function loadMyBots() {
               ${b.status === 'disabled' ? '<span class="penalty-tag muted">已下架</span>' : '<span class="badge-pending">上架中</span>'}
             </div>
             <div class="sub">计费: ${priceLabel(b)} · 模型: ${escapeHtml(b.api_model || '未配置')} · API: ${b.api_base_url ? '已配置' : '未配置'}</div>
-            <textarea data-bot-persona="${b.user_id}" rows="2" maxlength="2000" style="width:100%;background:#000;border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:13px;color:var(--text);resize:vertical;outline:none">${escapeHtml(b.persona)}</textarea>
+            <textarea data-bot-persona="${b.user_id}" rows="2" maxlength="2000" style="width:100%;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:13px;color:var(--text);resize:vertical;outline:none">${escapeHtml(b.persona)}</textarea>
             <div class="quick-edit">
               <select data-bot-ptype="${b.user_id}">${ptypeOptions(b)}</select>
               <input type="number" data-bot-price="${b.user_id}" value="${b.price_per_reply || ''}" min="1" style="width:80px" title="按条价(CCB)">
@@ -2970,7 +2970,7 @@ function renderAdminReports() {
           ${r.admin_note ? `<div class="admin-note">处理备注: ${escapeHtml(r.admin_note)}</div>` : ''}
           ${r.status === 'pending' ? `
             <div class="admin-report-actions" data-report-id="${r.id}" data-report-type="${r.target_type}">
-              <select data-field="action" style="background:#000;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--text)">
+              <select data-field="action" style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--text)">
                 ${actionOptions(r.target_type)}
               </select>
               <input data-field="days" type="number" placeholder="天数(封禁/禁言)" min="1">

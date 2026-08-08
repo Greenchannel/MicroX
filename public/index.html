@@ -1,28 +1,27 @@
 <!DOCTYPE html>
 <!--
-  index.html — MicroX 前端 SPA 壳
-  作用: 定义整体布局骨架(桌面左导航 / 移动端顶栏+底部导航 / 桌面右侧栏),
+  index.html — MicroX 前端 SPA 骨架
+  作用: 定义整体布局骨架(桌面左侧导航 / 移动端顶栏+底部导航 / 桌面右侧栏),
         页面内容由 app.js 按 hash 路由动态渲染到 #main。
-  兼容: 桌面(>1100px) / 平板(700~1100px) / 手机(<700px), 见 style.css 媒体查询。
+  兼容: 桌面(>1100px) / 平板(700~1100px) / 手机(<700px), 详见 style.css 媒体查询。
+  主题: Apple 风格(毛玻璃材质 + 系统字体 + 明暗自适应), 详见 design-system/micro-x/MASTER.md。
 -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="MicroX — 局域网内的微型社交平台">
+  <meta name="theme-color" content="#f2f2f7">
   <title>MicroX</title>
   <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=2">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Righteous&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=36">
+  <link rel="stylesheet" href="/style.css?v=38">
 </head>
 <body>
   <div id="app" class="layout">
     <!-- 桌面端左侧导航栏(平板时收窄为图标栏, 手机隐藏) -->
     <nav class="side-nav" id="side-nav">
       <a href="#/" class="brand" title="MicroX 首页">
-        <span class="brand-logo">𝕏</span><span class="brand-text">MicroX</span>
+        <span class="brand-logo">𝓜</span><span class="brand-text">MicroX</span>
       </a>
       <a href="#/" class="nav-item" data-route="home">
         <span class="nav-icon" aria-hidden="true">
@@ -76,7 +75,7 @@
       </a>
       <a href="#/settings" class="nav-item" data-route="settings">
         <span class="nav-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm9 2a9 9 0 0 0-.1-1.3l2-1.6-2-3.4-2.4 1a9 9 0 0 0-2.2-1.3L16 3.2h-4l-.3 2.4a9 9 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.6a9 9 0 0 0 0 2.6l-2 1.6 2 3.4 2.4-1a9 9 0 0 0 2.2 1.3l.3 2.4h4l.3-2.4a9 9 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.6c.07-.43.1-.86.1-1.3zm-2 0c0 .3 0 .6-.05.9l.02.14 1.8 1.4-.8 1.4-1.9-.8-.12.07c-.55.45-1.17.8-1.83 1l-.13.06-.1 2h-1.6l-.1-2-.13-.06a6 6 0 0 1-1.83-1l-.12-.07-1.9.8-.8-1.4 1.8-1.4.02-.14a6 6 0 0 1 0-1.8l-.02-.14-1.8-1.4.8-1.4 1.9.8.12-.07c.55-.45 1.17-.8 1.83-1l.13-.06.1-2h1.6l.1 2 .13.06a6 6 0 0 1 1.83 1l.12.07 1.9-.8.8 1.4-1.8 1.4-.02.14c.03.3.05.6.05.9z"/></svg>
+          <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm9 2a9 9 0 0 0-.1-1.3l2-1.6-2-3.4-2.4 1a9 9 0 0 0-2.2-1.3L16 3.2h-4l-.3 2.4a9 9 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.6a9 9 0 0 0 0 2.6l-2 1.6 2 3.4 2.4-1a9 9 0 0 0 2.2 1.3l.3 2.4h4l.3-2.4a9 9 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.6c.07-.43.1-.86.1-1.3zm-2 0c0 .3 0 .6-.05.9l.02.14 1.8 1.4-.8 1.4-1.9-.8-.12.07c-.55.45-1.17.8-1.83 1l-.13.06-.1 2h-1.6l-.1-2-.13-.06a6 6 0 0 1-1.83-1l-.12-.07-1.9.8-.8-1.4 1.8-1.4.02-.14a6 6 0 0 1 0-1.8l-.02-.14-1.8-1.4.8-1.4 1.9.8.12-.07c.55.45 1.17-.8 1.83-1l.13-.06.1-2h1.6l.1 2 .13.06a6 6 0 0 1 1.83 1l.12.07 1.9-.8.8 1.4-1.8 1.4-.02.14c.03.3.05.6.05.9z"/></svg>
         </span>
         <span class="nav-text">设置</span>
       </a>
@@ -90,7 +89,7 @@
 
     <!-- 手机/平板顶部栏 -->
     <header class="mobile-header" id="mobile-header">
-      <a href="#/" class="brand brand-mobile"><span class="brand-logo">𝕏</span><span class="brand-text">MicroX</span></a>
+      <a href="#/" class="brand brand-mobile"><span class="brand-logo">𝓜</span><span class="brand-text">MicroX</span></a>
       <span class="mobile-header-title" id="mobile-title">首页</span>
       <a href="#/settings" class="mobile-header-avatar" id="mobile-avatar" title="我的主页" hidden></a>
     </header>
@@ -143,7 +142,7 @@
         <span>管理</span>
       </a>
       <a href="#/settings" class="bottom-nav-item" data-route="settings">
-        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm9 2a9 9 0 0 0-.1-1.3l2-1.6-2-3.4-2.4 1a9 9 0 0 0-2.2-1.3L16 3.2h-4l-.3 2.4a9 9 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.6a9 9 0 0 0 0 2.6l-2 1.6 2 3.4 2.4-1a9 9 0 0 0 2.2 1.3l.3 2.4h4l.3-2.4a9 9 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.6c.07-.43.1-.86.1-1.3zm-2 0c0 .3 0 .6-.05.9l.02.14 1.8 1.4-.8 1.4-1.9-.8-.12.07c-.55.45-1.17.8-1.83 1l-.13.06-.1 2h-1.6l-.1-2-.13-.06a6 6 0 0 1-1.83-1l-.12-.07-1.9.8-.8-1.4 1.8-1.4.02-.14a6 6 0 0 1 0-1.8l-.02-.14-1.8-1.4.8-1.4 1.9.8.12-.07c.55-.45 1.17-.8 1.83-1l.13-.06.1-2h1.6l.1 2 .13.06a6 6 0 0 1 1.83 1l.12.07 1.9-.8.8 1.4-1.8 1.4-.02.14c.03.3.05.6.05.9z"/></svg>
+        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm9 2a9 9 0 0 0-.1-1.3l2-1.6-2-3.4-2.4 1a9 9 0 0 0-2.2-1.3L16 3.2h-4l-.3 2.4a9 9 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.6a9 9 0 0 0 0 2.6l-2 1.6 2 3.4 2.4-1a9 9 0 0 0 2.2 1.3l.3 2.4h4l.3-2.4a9 9 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.6c.07-.43.1-.86.1-1.3zm-2 0c0 .3 0 .6-.05.9l.02.14 1.8 1.4-.8 1.4-1.9-.8-.12.07c-.55.45-1.17.8-1.83 1l-.13.06-.1 2h-1.6l-.1-2-.13-.06a6 6 0 0 1-1.83-1l-.12-.07-1.9.8-.8-1.4 1.8-1.4.02-.14a6 6 0 0 1 0-1.8l-.02-.14-1.8-1.4.8-1.4 1.9.8.12-.07c.55.45 1.17-.8 1.83-1l.13-.06.1-2h1.6l.1 2 .13.06a6 6 0 0 1 1.83 1l.12.07 1.9-.8.8 1.4-1.8 1.4-.02.14c.03.3.05.6.05.9z"/></svg>
         <span>设置</span>
       </a>
     </nav>

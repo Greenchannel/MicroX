@@ -7,42 +7,39 @@
 ---
 
 **Project:** MicroX
-**Generated:** 2026-08-06 08:31:04
+**Generated:** 2026-08-08
 **Category:** Social Media App
 **Design Dials:** Density 5/10 (Standard)
+**Design Reference:** [emilkowalski/skills · apple-design](https://github.com/emilkowalski/skills/blob/main/skills/apple-design/SKILL.md)（Apple WWDC 设计规范 → Web 适配）
 
 ---
 
 ## Global Rules
 
-### Color Palette
+### Color Palette（iOS 系统色）
 
-| Role | Hex | CSS Variable |
-|------|-----|--------------|
-| Primary | `#475569` | `--color-primary` |
-| On Primary | `#FFFFFF` | `--color-on-primary` |
-| Secondary | `#334155` | `--color-secondary` |
-| Accent/CTA | `#0891B2` | `--color-accent` |
-| Background | `#0F172A` | `--color-background` |
-| Foreground | `#FFFFFF` | `--color-foreground` |
-| Muted | `#131B2F` | `--color-muted` |
-| Border | `rgba(255,255,255,0.08)` | `--color-border` |
-| Destructive | `#DC2626` | `--color-destructive` |
-| Ring | `#475569` | `--color-ring` |
+| Role | Hex (Light) | Hex (Dark) | CSS Variable |
+|---|---|---|---|
+| Accent (System Blue) | `#007AFF` | `#0A84FF` | `--color-accent` |
+| On Accent | `#FFFFFF` | `#FFFFFF` | `--color-on-accent` |
+| Background (System Gray 6) | `#F2F2F7` | `#000000` | `--color-background` |
+| Foreground (Label) | `#1C1C1E` | `#FFFFFF` | `--color-foreground` |
+| Secondary Label | `#6E6E73` | `#98989F` | `--color-text-dim` |
+| Panel / Card | `#FFFFFF` | `#1C1C1E` | `--color-panel` |
+| Separator | `rgba(60,60,67,.22)` | `rgba(84,84,88,.6)` | `--color-border` |
+| Destructive (System Red) | `#FF3B30` | `#FF453A` | `--color-destructive` |
+| Success (System Green) | `#1F8A3C` | `#32D74B` | `--color-green` |
+| Ring | `rgba(0,122,255,.35)` | `rgba(10,132,255,.45)` | `--color-ring` |
 
-**Color Notes:** Protective grey + subtle teal on dark
+**Color Notes:** 使用 iOS 系统色板；明暗双主题自动跟随系统（`prefers-color-scheme`）。深色背景用真黑 `#000`，浮层用深灰材质。
 
 ### Typography
 
-- **Heading Font:** Righteous
-- **Body Font:** Poppins
-- **Mood:** music, entertainment, fun, energetic, bold, performance
-- **Google Fonts:** [Righteous + Poppins](https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Righteous&display=swap)
-
-**CSS Import:**
-```css
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Righteous&display=swap');
-```
+- **Font Stack:** 系统字体优先 —— `-apple-system, "SF Pro Text", "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif`
+- **Large Title:** 26px+ / 700 / `letter-spacing: -0.02em` / `line-height: 1.2`
+- **Body:** 15px / `line-height: 1.5` / 字距接近 `0`
+- **Hierarchy:** 用字重 + 尺寸 + 行高组合构建层级，而非仅靠尺寸
+- **No external webfont:** 避免字体加载延迟，尊重系统光学尺寸与字距表
 
 ### Spacing Variables
 
@@ -50,110 +47,109 @@
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--space-xs` | `4px` / `0.25rem` | Tight gaps |
-| `--space-sm` | `8px` / `0.5rem` | Icon gaps, inline spacing |
-| `--space-md` | `16px` / `1rem` | Standard padding |
-| `--space-lg` | `24px` / `1.5rem` | Section padding |
-| `--space-xl` | `32px` / `2rem` | Large gaps |
-| `--space-2xl` | `48px` / `3rem` | Section margins |
-| `--space-3xl` | `64px` / `4rem` | Hero padding |
+| `--space-xs` | `4px` | Tight gaps |
+| `--space-sm` | `8px` | Icon gaps, inline spacing |
+| `--space-md` | `16px` | Standard padding |
+| `--space-lg` | `24px` | Section padding |
+| `--space-xl` | `32px` | Large gaps |
 
 ### Shadow Depths
 
-| Level | Value | Usage |
+| Level | Value (Light) | Usage |
 |-------|-------|-------|
-| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.05)` | Subtle lift |
-| `--shadow-md` | `0 4px 6px rgba(0,0,0,0.1)` | Cards, buttons |
-| `--shadow-lg` | `0 10px 15px rgba(0,0,0,0.1)` | Modals, dropdowns |
-| `--shadow-xl` | `0 20px 25px rgba(0,0,0,0.15)` | Hero images, featured cards |
+| `--shadow-sm` | `0 1px 2px rgba(0,0,0,.06)` | Cards, subtle lift |
+| `--shadow-md` | `0 4px 14px rgba(0,0,0,.1)` | Hover cards |
+| `--shadow-lg` | `0 12px 32px rgba(0,0,0,.18)` | Modals, menus |
 
 ---
 
 ## Component Specs
 
+### Materials（毛玻璃材质）
+
+```css
+/* 浮动层: 半透明 + 模糊 + 高饱和, 内容在下方滚动 */
+.toolbar,
+.page-title,
+.mobile-header,
+.bottom-nav {
+  background: color-mix(in srgb, var(--bg) 76%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* 弹窗/菜单: 更厚重的材质 */
+.modal, .tip-menu {
+  background: var(--elevated);
+  backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: var(--shadow-lg);
+}
+```
+
 ### Buttons
 
 ```css
-/* Primary Button */
+/* Primary Button: iOS 系统蓝, 按下即时反馈 */
 .btn-primary {
-  background: #0891B2;
-  color: white;
-  padding: 12px 24px;
-  border-radius: 8px;
+  background: #007AFF;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 999px;
   font-weight: 600;
-  transition: all 200ms ease;
+  transition: background 200ms ease, transform 100ms ease-out;
   cursor: pointer;
 }
 
-.btn-primary:hover {
-  opacity: 0.9;
-  transform: translateY(-1px);
-}
-
-/* Secondary Button */
-.btn-secondary {
-  background: transparent;
-  color: #475569;
-  border: 2px solid #475569;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 200ms ease;
-  cursor: pointer;
-}
+.btn-primary:active { transform: scale(0.97); }  /* 指针按下即响应 */
+.btn-primary:hover { background: #3395FF; }
 ```
 
 ### Cards
 
 ```css
 .card {
-  background: #0F172A;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: var(--shadow-md);
+  background: #FFFFFF;
+  border: 1px solid rgba(60,60,67,.12);
+  border-radius: 16px;
+  padding: 15px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
   transition: all 200ms ease;
-  cursor: pointer;
-}
-
-.card:hover {
-  box-shadow: var(--shadow-lg);
-  transform: translateY(-2px);
 }
 ```
 
-### Inputs
+### Inputs（iOS 灰色填充输入框）
 
 ```css
 .input {
-  padding: 12px 16px;
-  border: 1px solid #E2E8F0;
-  border-radius: 8px;
-  font-size: 16px;
-  transition: border-color 200ms ease;
+  background: #ECECF1;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 11px 13px;
+  font-size: 15px;
+  color: #1C1C1E;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
 }
 
 .input:focus {
-  border-color: #475569;
-  outline: none;
-  box-shadow: 0 0 0 3px #47556920;
+  border-color: #007AFF;
+  background: #FFF;
+  box-shadow: 0 0 0 3px rgba(0,122,255,.12);
 }
 ```
 
-### Modals
+### Segmented Control（分段控件）
 
 ```css
-.modal-overlay {
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
+.segmented {
+  display: flex;
+  padding: 3px;
+  background: #ECECF1;
+  border-radius: 10px;
 }
-
-.modal {
-  background: white;
-  border-radius: 16px;
-  padding: 32px;
-  box-shadow: var(--shadow-xl);
-  max-width: 500px;
-  width: 90%;
+.segmented .segment.active {
+  background: #FFF;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  font-weight: 600;
 }
 ```
 
@@ -161,13 +157,11 @@
 
 ## Style Guidelines
 
-**Style:** Vibrant & Block-based
+**Style:** Apple 原生感 · 材质与克制
 
-**Keywords:** Bold, energetic, playful, block layout, geometric shapes, high color contrast, duotone, modern, energetic
+**Keywords:** 毛玻璃、系统蓝、真黑深色、大标题、圆角、克制动效、即时反馈、内容优先
 
-**Best For:** Startups, creative agencies, gaming, social media, youth-focused, entertainment, consumer
-
-**Key Effects:** Large sections (48px+ gaps), animated patterns, bold hover (color shift), scroll-snap, large type (32px+), 200-300ms
+**Key Effects:** 半透明浮层（blur+saturate）、大标题负字距、分段控件、按下微缩反馈、明暗自动切换
 
 ### Page Pattern
 
@@ -175,37 +169,34 @@
 
 - **Conversion Strategy:** Show active community (member count, posts today). Highlight benefits. Preview content. Easy onboarding.
 - **CTA Placement:** Join button prominent + After member showcase
-- **Section Order:** 1. Hero (community value prop), 2. Popular topics/categories, 3. Active members showcase, 4. Join CTA
+
+---
+
+## Motion & Feedback（源自 apple-design skill）
+
+- **响应性:** 指针按下即反馈（`:active` 缩放/高亮），不要在抬起后才反馈
+- **克制动效:** 只用 `transform` / `opacity` 动画；过渡 150~300ms；无弹跳过场
+- **空间一致:** 元素从哪个方向出现就从哪个方向消失；菜单/弹层锚定触发源
+- **减少动效:** 尊重 `prefers-reduced-motion`（关闭滑动/缩放）、`prefers-reduced-transparency`（毛玻璃降级为实底）、`prefers-contrast`（加强描边）
 
 ---
 
 ## Anti-Patterns (Do NOT Use)
 
-- ❌ Heavy skeuomorphism
-- ❌ Accessibility ignored
-
-### Additional Forbidden Patterns
-
-- ❌ **Emojis as icons** — Use SVG icons (Heroicons, Lucide, Simple Icons)
-- ❌ **Missing cursor:pointer** — All clickable elements must have cursor:pointer
-- ❌ **Layout-shifting hovers** — Avoid scale transforms that shift layout
-- ❌ **Low contrast text** — Maintain 4.5:1 minimum contrast ratio
-- ❌ **Instant state changes** — Always use transitions (150-300ms)
-- ❌ **Invisible focus states** — Focus states must be visible for a11y
+- ✗ 重拟物、过度装饰
+- ✗ 忽略无障碍（对比度 < 4.5:1、无可见焦点）
+- ✗ Emoji 当图标（统一使用 SVG）
+- ✗ 点击元素缺 `cursor:pointer`
+- ✗ 无过渡的瞬间状态变化
+- ✗ 在深色模式使用纯白背景
 
 ---
 
 ## Pre-Delivery Checklist
 
-Before delivering any UI code, verify:
-
-- [ ] No emojis used as icons (use SVG instead)
-- [ ] All icons from consistent icon set (Heroicons/Lucide)
-- [ ] `cursor-pointer` on all clickable elements
-- [ ] Hover states with smooth transitions (150-300ms)
-- [ ] Light mode: text contrast 4.5:1 minimum
-- [ ] Focus states visible for keyboard navigation
-- [ ] `prefers-reduced-motion` respected
-- [ ] Responsive: 375px, 768px, 1024px, 1440px
-- [ ] No content hidden behind fixed navbars
-- [ ] No horizontal scroll on mobile
+- [ ] 明暗双主题均通过 4.5:1 对比度
+- [ ] `prefers-reduced-motion` / `prefers-reduced-transparency` / `prefers-contrast` 已适配
+- [ ] 所有可点击元素有 `cursor:pointer`
+- [ ] 焦点状态可见
+- [ ] 响应式: 375px / 768px / 1024px / 1440px
+- [ ] 毛玻璃浮层不遮挡内容、无横向滚动

@@ -327,3 +327,5 @@ MicroX/
 - [2026-08-05] [Agent] 初始版本发布 (Feat: 注册/登录/发帖/点赞/删除/改名/头像/搜索/响应式 UI)
 
 - [2026-08-08] [Codex] 回滚: UI 重设计已撤销, 恢复至 ebfcd31 外观 (改动提交 20793f4 保留在历史中, 可随时重新应用)
+
+- [2026-08-08] [Codex] UI 重设计: Apple 风格 (Feat: 毛玻璃材质 + iOS 系统蓝 + 系统字体栈 + 明暗自适应 + 无障碍降级; 依据 emilkowalski/skills apple-design; 同步更新 design-system/micro-x/MASTER.md)
