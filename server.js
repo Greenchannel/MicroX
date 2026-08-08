@@ -4517,6 +4517,20 @@ async function handleAdminStockCreate(req, res) {
   ok(res, { id: stockId });
 }
 
+/**
+ * DELETE /api/admin/stocks/:id: 管理员删除股票。
+ * 删除会同时清理该股的走势、所有用户持仓与成交流水(不可恢复)。
+ */
+function handleAdminStockDelete(req, res, segs) {
+  const admin = requireAdmin(req, res);
+  if (!admin) return;
+  const stockId = Number(segs[3]);
+  if (!Number.isInteger(stockId) || stockId <= 0) return fail(res, 400, '股票 ID 不合法');
+  if (!db.getStockById(stockId)) return fail(res, 404, '股票不存在');
+  db.deleteStock(stockId);
+  ok(res, { id: stockId });
+}
+
 // ---------- 路由分发 ----------
 
 async function route(req, res) {
@@ -4604,6 +4618,7 @@ async function route(req, res) {
     if (req.method === 'PATCH' && sub === 'admin' && segs[2] === 'store' && segs.length === 5 && segs[3] === 'items') return await handleAdminStoreUpdate(req, res, segs);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'store' && segs.length === 6 && segs[3] === 'item' && segs[5] === 'toggle') return await handleAdminStoreToggle(req, res, segs);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'stocks' && segs.length === 3) return await handleAdminStockCreate(req, res);
+    if (req.method === 'DELETE' && sub === 'admin' && segs[2] === 'stocks' && segs.length === 4) return handleAdminStockDelete(req, res, segs);
     if (req.method === 'GET' && sub === 'admin' && segs[2] === 'announcements' && segs.length === 3) return handleAdminAnnouncementsList(req, res);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'announcements' && segs.length === 3) return await handleAdminAnnouncementsCreate(req, res);
     if (req.method === 'POST' && sub === 'admin' && segs[2] === 'announcements' && segs.length === 5 && segs[4] === 'toggle') return await handleAdminAnnouncementsToggle(req, res, segs);

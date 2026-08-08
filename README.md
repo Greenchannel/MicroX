@@ -329,3 +329,9 @@ MicroX/
 - [2026-08-08] [Codex] 回滚: UI 重设计已撤销, 恢复至 ebfcd31 外观 (改动提交 20793f4 保留在历史中, 可随时重新应用)
 
 - [2026-08-08] [Codex] UI 重设计: Apple 风格 (Feat: 毛玻璃材质 + iOS 系统蓝 + 系统字体栈 + 明暗自适应 + 无障碍降级; 依据 emilkowalski/skills apple-design; 同步更新 design-system/micro-x/MASTER.md)
+
+- [2026-08-08] [Codex] UI 全面重构: Aurora 极光风格 (Feat: X/Threads 式无边框信息流 + Linear/Vercel 级精致细节 + 靛蓝→紫罗兰渐变强调色 + 暖中性浅色/蓝黑深色双主题 + 骨架屏/空状态/动效/无障碍降级; 重写 public/style.css 与 design-system/micro-x/MASTER.md, 新增 pages/ 页面规范, index.html 更新 theme-color 与缓存版本, app.js 仅增强评论区空状态; 服务端与全部 API 零改动)
+
+- [2026-08-08] [Codex] 支持删除股票 (Feat: 新增 DELETE /api/admin/stocks/:id 接口(仅管理员), 删除时事务清理成交流水/走势/持仓/股票行; 商店-股市 Tab 股票卡片对管理员显示"删除"按钮, 二次确认后删除并刷新; 服务端与前端均已验证, 数据表结构不变)
+
+- [2026-08-08] [Codex] 修复打赏菜单不弹出 (Fix: Aurora 重构时 .tip-menu 绝对定位失去锚点被甩到视口外; 用 .tip-wrap 包裹打赏按钮作为定位基准, 菜单左对齐弹出在按钮正上方; 端到端验证点选 10/50/100 均正常, 版本号升至 v41)

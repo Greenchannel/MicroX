@@ -976,6 +976,10 @@ const stmts = {
   setStockSharesOut: db.prepare('UPDATE stocks SET shares_out = ? WHERE id = ?'),
   addStockVolume: db.prepare('UPDATE stocks SET volume = volume + ? WHERE id = ?'),
   setStockEnabled: db.prepare('UPDATE stocks SET enabled = ? WHERE id = ?'),
+  deleteStockTrades: db.prepare('DELETE FROM stock_trades WHERE stock_id = ?'),
+  deleteStockTicks: db.prepare('DELETE FROM stock_ticks WHERE stock_id = ?'),
+  deleteStockHoldings: db.prepare('DELETE FROM stock_holdings WHERE stock_id = ?'),
+  deleteStockRow: db.prepare('DELETE FROM stocks WHERE id = ?'),
   holdingOf: db.prepare('SELECT shares FROM stock_holdings WHERE user_id = ? AND stock_id = ?'),
   holdingAvg: db.prepare('SELECT avg_cost FROM stock_holdings WHERE user_id = ? AND stock_id = ?'),
   setHolding: db.prepare(
@@ -2091,6 +2095,21 @@ function setStockEnabled(stockId, enabled) {
   stmts.setStockEnabled.run(enabled ? 1 : 0, stockId);
 }
 
+/**
+ * 删除股票(管理员): 按依赖顺序清理成交流水/走势/持仓, 最后删股票行。
+ * 外键未强制开启, 必须手动清理关联表; 整体放入事务保证原子性。
+ * @param {number} stockId 股票 ID
+ * @returns {number} 受影响行数(0 = 股票不存在)
+ */
+function deleteStock(stockId) {
+  return runInTransaction(() => {
+    stmts.deleteStockTrades.run(stockId);
+    stmts.deleteStockTicks.run(stockId);
+    stmts.deleteStockHoldings.run(stockId);
+    return stmts.deleteStockRow.run(stockId).changes;
+  });
+}
+
 /** 某用户对某股票的持仓股数(0 = 无持仓) */
 function getHolding(userId, stockId) {
   const row = stmts.holdingOf.get(userId, stockId);
@@ -2349,6 +2368,7 @@ module.exports = {
   setStockSharesOut,
   addStockVolume,
   setStockEnabled,
+  deleteStock,
   getHolding,
   getHoldingAvg,
   setHolding,

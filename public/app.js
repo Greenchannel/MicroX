@@ -223,7 +223,7 @@ function postHtml(post) {
             <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/></svg>
             <span class="comment-count">${post.comment_count}</span>
           </button>
-          ${tipBtn}
+          <span class="tip-wrap">${tipBtn}</span>
         </div>
         <div class="comment-section" id="comment-section-${post.id}" hidden></div>
       </div>
@@ -265,7 +265,11 @@ function renderCommentSection(section, postId, comments) {
         <button class="btn btn-primary" style="padding:6px 16px;font-size:13px" type="submit">评论</button>
       </form>`
     : `<div class="empty" style="padding:10px">登录后可评论</div>`;
-  section.innerHTML = `${inputRow}<div class="comment-list">${comments.map(commentHtml).join('')}</div>`;
+  // 评论区为空时给出引导, 避免展开后只有输入框造成空白区
+  const listHtml = comments.length
+    ? comments.map(commentHtml).join('')
+    : '<div class="empty" style="padding:14px 0">还没有评论，来说两句吧</div>';
+  section.innerHTML = `${inputRow}<div class="comment-list">${listHtml}</div>`;
 }
 
 /** 单条评论 HTML(含回复树) */
@@ -1449,6 +1453,10 @@ function sparklineHtml(ticks) {
 function stockCard(s) {
   const changeCls = s.change_day > 0 ? 'up' : s.change_day < 0 ? 'down' : 'flat';
   const changeSign = s.change_day > 0 ? '+' : '';
+  // 仅管理员可见: 删除股票(同时清理走势/持仓/成交流水, 不可恢复)
+  const adminDel = me && me.is_admin === 1
+    ? `<button class="btn btn-danger" style="padding:7px 14px;font-size:13px" data-action="delete-stock" data-id="${s.id}" data-name="${escapeHtml(s.name)}">删除</button>`
+    : '';
   return `
     <div class="store-card">
       <div class="store-name">${escapeHtml(s.name)} <span class="store-tag" style="background:#ffd400;color:#000">官方</span></div>
@@ -1463,6 +1471,7 @@ function stockCard(s) {
       <div class="store-buy">
         <button class="btn btn-gold" style="padding:7px 14px;font-size:13px" data-stock-trade="${s.id}">买入</button>
         <button class="btn btn-ghost" style="padding:7px 14px;font-size:13px" data-stock-trade="${s.id}">卖出</button>
+        ${adminDel}
       </div>
       <div class="stock-trade-box" id="stock-trade-${s.id}" hidden>
         <input class="stock-trade-input" type="number" id="stock-shares-${s.id}" min="1" max="1000" placeholder="输入股数(1~1000)">
@@ -3595,6 +3604,21 @@ function onMainClick(e) {
           toast('已卸下');
           loadStoreMine();
           updateShell();
+        })
+        .catch((err) => toast(err.message, true));
+      return;
+    }
+
+    if (action === 'delete-stock') {
+      if (!me || me.is_admin !== 1) return toast('需要管理员权限', true);
+      const stockId = Number(btn.dataset.id);
+      const stockName = btn.dataset.name || '该股票';
+      // 删除会连带清掉走势/所有用户持仓/成交流水, 确认文案需说清后果
+      if (!window.confirm(`确定删除股票「${stockName}」？将同时删除其走势、所有用户持仓与成交记录，且不可恢复。`)) return;
+      api('DELETE', `/api/admin/stocks/${stockId}`)
+        .then(() => {
+          toast('股票已删除');
+          loadStocks();
         })
         .catch((err) => toast(err.message, true));
       return;
