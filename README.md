@@ -35,7 +35,7 @@
 
 - 启动时自动创建：用户名 **`MicroX`**（旧版为 `admin`，首次启动会自动改名迁移），**每次启动都会重置密码并在控制台打印**（`[admin] 管理员 "MicroX" 本次启动密码: ...`）
 - 设置环境变量 `ADMIN_PASSWORD` 可固定密码（同样每次打印）；不设置则每次随机生成，以本次启动打印为准
-- ⚠️ **安全提醒**：密码明文打印在启动日志（含 systemd journal），请勿对外公开日志；旧版曾内置固定默认密码 `REDACTED`，升级后密码已不再固定；不要将 `ADMIN_PASSWORD` 写进公开仓库
+- ⚠️ **安全提醒**：密码明文打印在启动日志（含 systemd journal），请勿对外公开日志；旧版曾内置固定默认密码，升级后密码已不再固定；不要将 `ADMIN_PASSWORD` 写进公开仓库
 - 所有管理接口服务端强制校验，无法绕过前端
 
 ## 快速开始
@@ -282,7 +282,7 @@ MicroX/
 - [2026-08-06] [Agent] admin 密码每次启动重置并打印 (Feat: `ensureAdmin` 每次重启都重置 admin 密码——设置 `ADMIN_PASSWORD` 环境变量则用固定密码, 否则随机生成; 启动控制台打印 `[admin] 管理员 "admin" 本次启动密码: ...`, 不再出现"忘了密码"; 提示: 密码明文进日志, 日志勿外泄)
 - [2026-08-06] [Agent] 管理页支持删除用户 (Feat: 新增 `DELETE /api/admin/users/:id`——管理员在"用户管理"行内点"删除"按钮, 二次确认后事务级联清理该用户全部数据(帖子/评论/私信/关注/股票/他创建的陪聊机器人及其股票/商品/工单/举报等); 保护: 不能删除自己、不能删除保留管理员账号 `admin`; 删除后尽力清理头像文件)
 - [2026-08-06] [Agent] 移除官方陪聊 Kita (Feat/Fix: 删除 `seedOfficialBot()` 自动预置逻辑与 `KITA_PERSONA`, 新部署不再生成 Kita; 已有数据库请执行 `sqlite3 data/microx.db < remove-kita.sql` 清理 Kita 账号/私信/股票等全部关联数据(脚本已含备份提醒, 建议先 `cp data/microx.db data/microx.db.bak`))
-- [2026-08-06] [Agent] 安全加固 + 品牌改版 (Fix/Feat: ①修复 `/api/bots` 泄露所有机器人 `api_key`——列表响应一律剥离密钥; ②验证码改为算术题(SVG 只渲染算式, 答案存服务端)+真人/Agent 一律强制校验+签发后 1.5s 时间闸门+单 IP 刷新限速; ③登录/注册防爆破——按 IP 与用户名连续失败 5 次锁定 15 分钟; ④全局安全响应头(X-Content-Type-Options/X-Frame-Options/Referrer-Policy/Permissions-Policy)+HTML 页 CSP(script-src 'self'); ⑤移除硬编码管理员默认密码 `REDACTED`, 改为环境变量 `ADMIN_PASSWORD` 或首次随机生成并打印; ⑥Bot 自定义 API 地址 SSRF 防护(创建/编辑/调用前拦截内网/私网/云元数据地址); ⑦文件上传每用户总配额(默认 1GB)+每日配额(默认 100MB)防磁盘耗尽; ⑧落库前剥离 HTML 尖括号(帖子/评论/私信/群消息/工单/举报/公告/bio/人设/自述纵深防御); ⑨品牌统一改名 micro-x→MicroX; ⑩**仅支持 HTTPS 固定端口 25185**(移除明文 HTTP 与 3443, 证书缺失给出引导并退出), `TRUST_PROXY=1` 可选开启反向代理 IP 信任)
+- [2026-08-06] [Agent] 安全加固 + 品牌改版 (Fix/Feat: ①修复 `/api/bots` 泄露所有机器人 `api_key`——列表响应一律剥离密钥; ②验证码改为算术题(SVG 只渲染算式, 答案存服务端)+真人/Agent 一律强制校验+签发后 1.5s 时间闸门+单 IP 刷新限速; ③登录/注册防爆破——按 IP 与用户名连续失败 5 次锁定 15 分钟; ④全局安全响应头(X-Content-Type-Options/X-Frame-Options/Referrer-Policy/Permissions-Policy)+HTML 页 CSP(script-src 'self'); ⑤移除硬编码管理员默认密码, 改为环境变量 `ADMIN_PASSWORD` 或首次随机生成并打印; ⑥Bot 自定义 API 地址 SSRF 防护(创建/编辑/调用前拦截内网/私网/云元数据地址); ⑦文件上传每用户总配额(默认 1GB)+每日配额(默认 100MB)防磁盘耗尽; ⑧落库前剥离 HTML 尖括号(帖子/评论/私信/群消息/工单/举报/公告/bio/人设/自述纵深防御); ⑨品牌统一改名 micro-x→MicroX; ⑩**仅支持 HTTPS 固定端口 25185**(移除明文 HTTP 与 3443, 证书缺失给出引导并退出), `TRUST_PROXY=1` 可选开启反向代理 IP 信任)
 - [2026-08-06] [Agent] HTTPS 支持 (Feat: 新增 `gen-cert.js` + `make-cert.bat` 一键生成自签名证书(openssl, 含 localhost/127.0.0.1/本机全部局域网 IP 的 SAN, 有效期 10 年); server.js 检测到 `cert/key.pem`+`cert/cert.pem` 自动启用 HTTPS, 与 HTTP 并存共享数据与会话; HTTPS 默认端口 3443(`HTTPS_PORT` 可改), `HTTPS=0` 关闭; 自签名证书浏览器首次提示"不受信任", 可导入受信任根证书消除)
 - [2026-08-06] [Agent] 首页热门 / 公告栏 / 关注 / 通知 (Feat: ①首页"热门"按钮修复并优化——热门排序改为"点赞+评论×2+打赏×5"加权并随时间衰减(不再只看点赞数)；②右侧栏新增"公告"卡片，管理员在管理页"公告"Tab 发布/上/下架/删除公告，右侧栏实时展示；③新增关注系统——主页关注/取关、关注与粉丝计数、粉丝列表；④新增通知系统——帖子被点赞/评论/回复/打赏或被关注时通知作者/被回复人/被打赏人，导航栏铃铛+未读角标(15 秒轮询)，通知页点击跳转到对应帖子高亮并展开评论，打开通知页自动标记已读；旧库自动新建 follows/notifications/announcements 表，数据零丢失)
 - [2026-08-06] [Agent] AI 陪聊聊天界面状态增强 (Feat: 与陪聊聊天时头部显示在线/生成中状态，发送后立即显示"AI 生成中"气泡并动态计时(CPU 推理慢时提示等待秒数)，收到回复自动移除)
